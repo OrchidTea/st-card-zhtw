@@ -1,0 +1,86 @@
+# 角色卡台灣繁中工具 v0.5.3
+
+把簡體 SillyTavern 角色卡（PNG／JSON）與 Preset 轉成台灣繁體中文。角色設定、世界書、開場白、正則畫面一起轉換並同步對應；網址、音源、程式名稱維持原樣。全部在瀏覽器處理，不上傳、不需要伺服器程式。
+
+## 更新 NAS（Docker）
+
+資料夾結構與 v0.3.2／v0.4 相同，容器設定不變（`nginx:alpine`，連接埠 8001，掛載 `./dist`）。
+
+1. 先備份 NAS 上現有的整個工具資料夾（尤其是你改過的 `dist/dictionary.json`）。
+2. 用這個壓縮檔的內容**整包取代**原資料夾的檔案（`docker-compose.yml`、`dist/` 等）。
+3. 不需要重建或重啟容器；如果容器沒在執行，在資料夾內執行 `docker compose up -d`，或在 Container Manager 啟動專案。
+4. 瀏覽器開啟原本的網址，按 Ctrl+F5 強制重新整理。頁面左上角應顯示 v0.5.3。
+
+網站實際使用的只有 `dist/` 裡的檔案：`index.html`、`app.js`、`styles.css`、`dictionary.json`，以及 `assets/mascot/` 的頭像動畫。
+
+## 使用流程
+
+1. 載入角色卡，按「轉換為台灣繁中」。
+2. 「需要你確認的詞」：點詞語，選擇全部改、全部保留或逐處決定；可請 AI 判斷。
+3. 「搜尋與修正」：輸入姓名或文字，列出所有出現位置，可一次同步更正。
+4. 「簡繁對照」：每個欄位按行對齊，左邊簡體、右邊繁中，只有一條捲軸；淡色是有變動的字，醒目色是待確認的詞。
+5. 技術檢核通過後，從底部下載 PNG 或 JSON。每一步都可以「復原上一步」。
+
+## 維護繁體化詞庫
+
+編輯 `dist/dictionary.json`，存檔後重新整理網頁即生效，不必重建。
+
+- `autoFix`：轉換後一定是錯字的寫法，會自動修正（例如 籤售→簽售、髮現→發現）。
+- `review`：可能對也可能錯的詞，只提醒、由使用者決定（例如 冷麵、不準、酒店）。
+- `taiwan`：意思明確的台灣用語（例如 屏幕→螢幕）。
+- `knownGood`／`aiScanChars`：AI 檢查時略過的正確詞，以及需要 AI 檢查的易錯字。
+
+`find` 預設是純文字，加上 `"regex": true` 才當正規表示式。網頁第 2 步產生的「詞庫建議」可直接貼進對應區塊。檔案格式錯誤時，網頁會改用內建詞庫並顯示提示。
+
+注意：下次更新工具時，新版的 `dist/dictionary.json` 會蓋掉你改過的檔案，更新前請先備份並把自己加的規則併回去。
+
+## AI 協助
+
+使用者自備 API 金鑰（Google Gemini／AI Studio、Anthropic、OpenAI 相容服務）。金鑰只存在使用者自己的瀏覽器（localStorage），不勾「記住」則關閉網頁就消失；網站沒有伺服器接收金鑰。只會把待判斷字詞前後約 24 字送給使用者選的服務商，AI 只提供建議。
+
+建議用 Google AI Studio 的免費額度：在沒有綁定帳單的專案另建一把專用金鑰，模型填 `gemini-3.5-flash-lite` 或 `gemini-3.8-flash`，連線網址已內建。免費額度送出的內容可能被 Google 用來改進產品。
+
+## 頭像與橫幅圖
+
+圖檔放在 `assets/`（NAS 上是 `dist/assets/`），用同檔名覆蓋即可替換：
+
+| 檔案 | 位置與時機 |
+|---|---|
+| `brand/banner.webp` | 頁面最上方的橫幅 |
+| `mascot/avatar.webp` | 左上角的圓形頭像（轉換中會閃光） |
+| `mascot/working.webp` | 下載列：轉換中（上下輕晃） |
+| `mascot/review.webp` | 下載列：有詞語需要手動確認，或技術檢核有問題（搖擺提醒） |
+| `mascot/done.webp` | 下載列：轉換完成；全部確認完成時會跳動並搭配下載列慶祝效果 |
+
+原圖為透明背景 PNG，已裁切多餘空白並轉成 WebP 以縮小檔案。之後若有專用的「恭喜完成」圖，存成 `mascot/celebrate.webp` 並告知維護者調整對應即可。
+
+## 安全設計
+
+- 角色卡內容一律以純文字顯示，卡片裡的 HTML／JS 不會在本頁執行。
+- 頁面設定內容安全政策（CSP）：只載入本站的程式，不載入任何外部腳本。
+- 轉換後逐欄比對原卡：網址與媒體路徑、`<script>`／`<style>` 的程式符號、JS 函式與事件名稱、正則語法；任何變動都會阻擋下載。
+
+## 放上 GitHub Pages
+
+`.github/workflows/pages.yml` 會在每次推送後自動執行 `npm run build` 並把 `dist/` 發布到 GitHub Pages。儲存庫設定 → Pages → Source 選「GitHub Actions」即可。之後在 GitHub 網頁上直接修改根目錄的 `dictionary.json`，存檔後幾分鐘網站就會更新。
+
+## 開發與測試
+
+需要 Node.js，無須安裝套件：
+
+    npm run build      # 產生 dist/ 與 build/core.js
+    npm test           # 回歸測試
+
+`src/v05-engine.js` 是 v0.5 轉換層；`src/app-ui.js` 是介面；`src/ai.js` 是 AI 串接；`src/legacy-core.js`、`localization.js`、`manual-review.js`、`png-export.js` 沿用 v0.3.2 的字形轉換、姓名與引用同步檢核、PNG 匯出。OpenCC 1.4.2 位於 `vendor/`，授權見 `licenses/`。
+
+實卡回歸測試：把原始簡體卡放在 `test/cards/fan-original.png`（范道允）與 `test/cards/jiang-original.png`（江知弈），測試會檢查已知錯字歸零、正則觸發字對應、音源網址不變與 PNG 往返。角色卡檔案不隨工具散布。
+
+## 致謝與授權
+
+介面構想參考自 minijinai 的 [SillyTavern 繁中轉換工具箱](https://minijinai75.github.io/stpreset-viewer/)；本工具的程式碼為另行撰寫。
+
+本工具以 MIT 授權釋出（見 `LICENSE`），© 2026 OrchidTea。opencc-js 為 MIT 授權（nk2028），OpenCC 詞典資料為 Apache License 2.0，授權全文見 `licenses/`。
+
+## 限制
+
+靜態檢查不執行卡片腳本；外部世界書、外掛行為與實際播放仍需在酒館測試。網易雲音樂、QQ 音樂等外鏈音源在台灣常無法播放，工具會在技術檢核中提醒。

@@ -1,0 +1,9 @@
+{
+  "name": "sillytavern-taiwan-card-translator",
+  "version": "0.5.3",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node test/regression.cjs"
+  }
+}

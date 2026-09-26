@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>角色卡台灣繁中工具</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand-wrap">
+    <img id="mascotTop" class="avatar" src="assets/mascot/avatar.webp" alt="OrchidTea" width="44" height="44">
+    <div class="brand">角色卡台灣繁中工具 <small>v0.5.3</small><span class="byline">by OrchidTea</span></div>
+  </div>
+  <button id="aiToggle" class="ai-pill" type="button" aria-expanded="false" aria-controls="aiPanel"><span class="dot"></span><span id="aiPillText">AI 協助：未設定</span></button>
+</header>
+
+<section id="aiPanel" class="ai-panel" hidden>
+  <form class="ai-inner" id="aiForm" autocomplete="off">
+    <h2>AI 協助設定</h2>
+    <p class="muted">AI 會幫你判斷「冷面／冷麵」這類要看前後文的字，只提供建議，不會自己改卡。使用你自己的 API 金鑰，金鑰只存在你這台電腦的瀏覽器裡，本網站不接收、不儲存。</p>
+    <div class="ai-grid">
+      <label>服務商
+        <select id="aiProvider">
+          <option value="gemini">Google Gemini／AI Studio（推薦）</option>
+          <option value="anthropic">Anthropic（Claude）</option>
+          <option value="openai">OpenAI 相容（OpenAI、OpenRouter、DeepSeek 等）</option>
+        </select>
+      </label>
+      <label>模型名稱<input id="aiModel" type="text" autocomplete="off" spellcheck="false" list="aiModelList"></label>
+      <datalist id="aiModelList"></datalist>
+      <label id="aiBaseWrap" hidden>API 網址<input id="aiBase" type="url" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1"></label>
+      <label>API 金鑰<input id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="貼上金鑰"></label>
+    </div>
+    <p id="aiHint" class="hint"></p>
+    <label class="check"><input id="aiRemember" type="checkbox"> 記住在這台電腦（公用電腦請不要勾）</label>
+    <div class="row">
+      <button id="aiSave" type="submit" class="primary">儲存並測試連線</button>
+      <button id="aiClear" type="button">清除金鑰</button>
+      <span id="aiStatus" class="muted" role="status"></span>
+    </div>
+    <p class="fine">建議另外開一把專用金鑰給這個工具，並在服務商後台設定用量上限；萬一外洩，作廢那一把就好。送給 AI 的只有待判斷字詞前後約 24 個字，不會送整張卡。</p>
+  </form>
+</section>
+
+<main>
+  <section class="hero">
+    <img class="banner" src="assets/brand/banner.webp" alt="簡⇄繁 角色卡台灣繁中工具" width="1400" height="463">
+    <h1>簡體角色卡，一次轉成台灣繁中</h1>
+    <p>角色設定、世界書、開場白、正則畫面一起轉換並同步對應；網址、音源、程式名稱維持原樣，確保卡片照常運作。全部在你的瀏覽器處理，不上傳。</p>
+  </section>
+
+  <section class="card step" id="loadStep">
+    <h2><span class="num">1</span>載入角色卡</h2>
+    <div id="drop" class="drop">
+      <input id="file" type="file" accept=".json,.png">
+      <label for="file"><strong>拖放角色卡 PNG／JSON 或 Preset JSON</strong><span>或點這裡選擇檔案</span></label>
+    </div>
+    <details class="sub"><summary>貼上 JSON</summary><textarea id="jsonInput" rows="5" aria-label="貼上 JSON"></textarea><button id="loadJsonText" type="button">載入貼上的 JSON</button></details>
+    <details class="sub"><summary>進階設定</summary>
+      <label class="check"><input id="useTai" type="checkbox" checked> 「臺」統一寫成「台」（舞台、平台、台下，台灣常見寫法）</label>
+      <label class="block">完全不轉換的專有名詞（每行一個）<textarea id="protectedNames" rows="3"></textarea></label>
+      <label class="block">指定姓名更正（每行「原文=更正」）<textarea id="nameCorrections" rows="3"></textarea></label>
+    </details>
+    <div class="row"><button id="convert" type="button" class="primary" disabled>轉換為台灣繁中</button><span id="status" class="status" role="status">請先載入角色卡。</span></div>
+  </section>
+
+  <section id="summary" class="summary" hidden></section>
+
+  <section id="reviewStep" class="card step" hidden>
+    <h2><span class="num">2</span>需要你確認的詞</h2>
+    <p class="muted" id="reviewIntro"></p>
+    <div id="chips" class="chips"></div>
+    <div id="decision" class="decision" hidden></div>
+    <div id="aiScan" class="ai-scan"></div>
+    <details id="autoBox" class="sub"><summary id="autoSummary">已自動修正</summary><div id="autoList" class="auto-list"></div></details>
+    <details id="suggestBox" class="sub" hidden><summary>詞庫建議（<span id="suggestCount">0</span>）</summary>
+      <p class="muted">把下面的內容貼進 <code>dictionary.json</code>：一定是錯字的放 <code>autoFix</code>，要看語境的放 <code>review</code>。可以直接在框內修改。</p>
+      <textarea id="suggestText" rows="6" spellcheck="false"></textarea>
+      <div class="row"><button id="copySuggest" type="button">複製</button><button id="clearSuggest" type="button">清空</button></div>
+    </details>
+  </section>
+
+  <section id="searchStep" class="card step" hidden>
+    <h2><span class="num">3</span>搜尋與修正</h2>
+    <p class="muted">輸入姓名或文字，列出角色設定、世界書、正則畫面裡所有出現的位置；填入更正文字後可一次同步修改。</p>
+    <div class="search-row">
+      <label>要找的文字<input id="findText" type="text" placeholder="例如：范道允"></label>
+      <label>更正為（可留空只搜尋）<input id="replaceText" type="text" placeholder="正確寫法"></label>
+    </div>
+    <div class="row"><button id="applyReplace" type="button" class="primary" disabled>同步套用更正</button><span id="searchSummary" class="muted" role="status"></span></div>
+    <div id="searchResults" class="results"></div>
+    <details class="sub"><summary>辨識到的姓名</summary><div id="nameList" class="name-list"></div></details>
+  </section>
+
+  <section id="compareStep" class="card step" hidden>
+    <div class="compare-head">
+      <h2><span class="num">4</span>簡繁對照</h2>
+      <div class="compare-tools">
+        <input id="compareFilter" type="search" placeholder="篩選欄位或內容">
+        <label class="check"><input id="onlyChanged" type="checkbox"> 只看有變動的行</label>
+        <label class="check"><input id="showUnchanged" type="checkbox"> 包含沒變動的欄位</label>
+      </div>
+    </div>
+    <p class="muted legend"><span class="chg">淡色</span>＝簡轉繁有變動　<span class="rev">醒目</span>＝需要你確認（可點）</p>
+    <div id="termFilter" class="term-filter" hidden></div>
+    <div id="fields" class="fields"></div>
+    <button id="moreFields" type="button" hidden>顯示更多欄位</button>
+  </section>
+
+  <section id="checkStep" class="card step" hidden>
+    <h2>技術檢核</h2>
+    <div id="checks"></div>
+  </section>
+
+  <footer class="about">
+    <h2>轉換規則說明</h2>
+    <h3>轉換流程</h3>
+    <ol>
+      <li><strong>OpenCC 字形轉換</strong>：以開源的 OpenCC 詞典（透過 opencc-js，簡體 cn → 台灣正體 tw）把簡體字轉成台灣標準字形。</li>
+      <li><strong>詞庫自動修正</strong>：OpenCC 會因斷詞把某些字轉錯，例如「粉絲髮現」「籤售會」「迴歸期」。詞庫裡「一定是錯字」的寫法會自動改正為「發現」「簽售會」「回歸期」。</li>
+      <li><strong>台灣用語</strong>：屏幕→螢幕、默認→預設、點贊→按讚、視頻→影片等，只收錄意思明確、不會誤傷的詞。</li>
+      <li><strong>台／臺統一</strong>：預設把「臺」寫成台灣常見的「台」，可在進階設定關閉。</li>
+      <li><strong>需要確認的詞</strong>：「冷麵」「不準」「酒店」「信息」這類可能對、也可能錯的詞不會自動改，列在第 2 步讓你決定，也可以請 AI 看前後文判斷。</li>
+    </ol>
+    <h3>哪些會一起改、哪些保留原文</h3>
+    <p>角色名、世界書觸發詞、正則觸發條件和畫面文字會<strong>全部一起轉成繁體</strong>，因為聊天內容會變成繁體，這些如果留簡體就會對不上、功能失效。只有指向卡片外部或程式內部的東西保留原文：網址、音源與圖片路徑、HTML 的 id／class、JavaScript 函式與事件名稱、MVU 變數與 JSON 鍵名、<code>{{user}}</code> 等巨集。轉換後會逐一比對這些內容，有變動就禁止下載。</p>
+    <h3>繁體化詞庫</h3>
+    <p>規則放在網站資料夾的 <code>dictionary.json</code>（目前版本 <span id="dictVersion">—</span>），分成「autoFix 自動修正」「review 提醒確認」「taiwan 台灣用語」三類。你在第 2、3 步做的修正可以產生詞庫建議，貼進這個檔案後重新整理網頁即生效；只有能修改網站檔案的人才能更新詞庫。</p>
+    <h3>AI 協助與金鑰安全</h3>
+    <p>AI 功能使用你自己的 API 金鑰。金鑰只存在你這台電腦的瀏覽器（localStorage），勾選「記住」才會保存，不勾則關閉網頁就消失；本網站沒有伺服器接收或記錄金鑰。呼叫 AI 時，由你的瀏覽器直接連到你選的服務商，只送出待判斷字詞前後約 24 個字。AI 只提供建議，採用與否由你決定。同一台電腦、同一個瀏覽器的人都能使用已記住的金鑰，公用電腦請不要勾選。</p>
+    <p><strong>建議使用 Google AI Studio 的免費額度（Free tier）</strong>：到 <code>aistudio.google.com</code> 按「Get API key」，在<strong>沒有綁定帳單</strong>的專案另外建立一把專用金鑰，模型填 <code>gemini-3.5-flash-lite</code>（快、省，判斷錯字已足夠）或 <code>gemini-3.8-flash</code>。連線網址已內建，不用填。沒有綁定帳單的專案不會產生費用，金鑰萬一外洩，最多是額度被別人用完、暫時無法使用，作廢後重新建立即可；但別人仍可能以你的帳號名義濫用，發現異常請立即作廢。請注意，依 Google 的條款，免費額度送出的內容可能被用來改進 Google 的產品。使用付費服務（其他服務商或已綁定帳單的專案）時，請務必在後台設定用量上限。</p>
+    <h3>限制</h3>
+    <p>這是靜態檢查，不會執行卡片裡的腳本。外部世界書、外掛行為與實際播放效果仍需在酒館測試。網易雲音樂、QQ 音樂等外鏈音源在台灣常無法播放，沒有聲音不一定是轉換造成的。角色卡、PNG 圖片與其他資料只在你的瀏覽器處理，不會上傳。</p>
+    <p class="credit">製作：<strong>OrchidTea</strong>　｜　介面構想參考自 minijinai 的 <a href="https://minijinai75.github.io/stpreset-viewer/" target="_blank" rel="noopener noreferrer">SillyTavern 繁中轉換工具箱</a>　｜　本工具以 MIT 授權釋出</p>
+    <p class="fine">opencc-js 採 MIT 授權（nk2028），OpenCC 詞典資料採 Apache License 2.0 授權，授權全文見 licenses 資料夾。</p>
+  </footer>
+</main>
+
+<div id="downloadBar" class="download-bar" hidden>
+  <div class="dl-left">
+    <img id="mascotBar" class="mascot big" alt="" width="170" height="125" hidden>
+    <span id="downloadStatus" class="status bubble"></span>
+  </div>
+  <div class="row">
+    <button id="undo" type="button" disabled>復原上一步</button>
+    <button id="downloadJson" type="button" disabled>下載 JSON</button>
+    <button id="downloadPng" type="button" class="primary" disabled>下載 PNG</button>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

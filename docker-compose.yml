@@ -1,0 +1,9 @@
+services:
+  mvu-safe-translator:
+    image: nginx:alpine
+    container_name: mvu-safe-translator
+    restart: unless-stopped
+    ports:
+      - "8001:80"
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
