@@ -2,17 +2,6 @@
 
 把簡體 SillyTavern 角色卡（PNG／JSON）與 Preset 轉成台灣繁體中文。角色設定、世界書、開場白、正則畫面一起轉換並同步對應；網址、音源、程式名稱維持原樣。全部在瀏覽器處理，不上傳、不需要伺服器程式。
 
-## 更新 NAS（Docker）
-
-資料夾結構與 v0.3.2／v0.4 相同，容器設定不變（`nginx:alpine`，連接埠 8001，掛載 `./dist`）。
-
-1. 先備份 NAS 上現有的整個工具資料夾（尤其是你改過的 `dist/dictionary.json`）。
-2. 用這個壓縮檔的內容**整包取代**原資料夾的檔案（`docker-compose.yml`、`dist/` 等）。
-3. 不需要重建或重啟容器；如果容器沒在執行，在資料夾內執行 `docker compose up -d`，或在 Container Manager 啟動專案。
-4. 瀏覽器開啟原本的網址，按 Ctrl+F5 強制重新整理。頁面左上角應顯示 v0.5.3。
-
-網站實際使用的只有 `dist/` 裡的檔案：`index.html`、`app.js`、`styles.css`、`dictionary.json`，以及 `assets/mascot/` 的頭像動畫。
-
 ## 使用流程
 
 1. 載入角色卡，按「轉換為台灣繁中」。
