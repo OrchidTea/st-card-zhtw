@@ -16,7 +16,7 @@ fs.mkdirSync(path.join(root, 'dist'), {recursive: true});
 fs.mkdirSync(path.join(root, 'build'), {recursive: true});
 fs.writeFileSync(path.join(root, 'build/core.js'), shared + '\n})();');
 fs.writeFileSync(path.join(root, 'dist/app.js'), shared + '\n})();\n' + read('src/ai.js') + '\n' + read('src/app-ui.js'));
-fs.writeFileSync(path.join(root, 'dist/index.html'), read('index.html').replaceAll('{{VERSION}}', pkg.version));
+fs.writeFileSync(path.join(root, 'dist/index.html'), read('index.html').replaceAll('{{VERSION}}', pkg.version).replaceAll('{{DATE}}', pkg.releaseDate || ''));
 fs.copyFileSync(path.join(root, 'styles.css'), path.join(root, 'dist/styles.css'));
 fs.copyFileSync(path.join(root, 'dictionary.json'), path.join(root, 'dist/dictionary.json'));
 fs.cpSync(path.join(root, 'assets'), path.join(root, 'dist/assets'), {recursive: true});
