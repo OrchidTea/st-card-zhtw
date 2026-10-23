@@ -120,13 +120,13 @@ function updateConvertButton() {
 // ---------- state helpers ----------
 function pushHistory() {
   S.history.push({draft: T.U(S.draft), base: T.U(S.base), edits: [...S.edits], kept: new Set(S.kept), resolved: new Map(S.resolved),
-    aiStates: S.ai ? S.ai.proposals.map(p => p.state) : null});
+    aiStates: S.ai ? S.ai.proposals.map(p => ({state: p.state, to: p.to})) : null});
   if (S.history.length > 40) S.history.shift();
 }
 function undo() {
   const last = S.history.pop(); if (!last) return;
   Object.assign(S, {draft: last.draft, base: last.base, edits: last.edits, kept: last.kept, resolved: last.resolved});
-  if (S.ai && last.aiStates && last.aiStates.length === S.ai.proposals.length) S.ai.proposals.forEach((p, i) => { p.state = last.aiStates[i]; });
+  if (S.ai && last.aiStates && last.aiStates.length === S.ai.proposals.length) S.ai.proposals.forEach((p, i) => { p.state = last.aiStates[i].state; p.to = last.aiStates[i].to; p.editing = false; });
   S.aiScan = null; refresh(); toast('已復原上一步');
 }
 const mirrorOf = path => { const m = path.match(/^\$\/data\/(name|description|personality|scenario|first_mes|mes_example)$/u); return m ? '$/' + m[1] : null; };
@@ -293,6 +293,8 @@ function applyAiTerm(group) {
 // proposal can be restored. Changes are applied by the page, inside protected-text rules.
 const aiPendingCount = () => S.ai && S.ai.status === 'done' ? S.ai.proposals.filter(p => p.state === 'pending').length : 0;
 const escapeRe = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// A correction must be Chinese text of about the same length as what it replaces.
+const plausibleFix = (fix, match) => !!fix && /[\p{Script=Han}]/u.test(fix) && !/[A-Za-z0-9]/u.test(fix) && [...fix].length <= [...match].length + 2;
 const occOf = src => ({path: src.path, index: src.index, text: src.text, before: String(src.before || '').slice(-8), after: String(src.after || '').slice(0, 8), key: src.key});
 
 async function runAiPass() {
@@ -307,9 +309,9 @@ async function runAiPass() {
   const tokens = S.result.frozen || [], proposals = [];
   try {
     // 1. Characters OpenCC often gets wrong, and words whose meaning depends on context.
-    const review = S.review.flatMap(g => visibleItems(g).map(i => ({src: i, options: g.suggest})));
+    const review = S.review.flatMap(g => visibleItems(g).map(i => ({src: i, options: g.suggest, note: g.note})));
     const candidates = T.aiCandidates(S.draft, tokens, S.review, 400);
-    const items = [...review.map((x, n) => ({id: 'r' + n, src: x.src, before: x.src.before, match: x.src.text, after: x.src.after, options: x.options})),
+    const items = [...review.map((x, n) => ({id: 'r' + n, src: x.src, before: x.src.before, match: x.src.text, after: x.src.after, options: x.options, note: x.note})),
       ...candidates.map(c => ({id: c.id, src: c, before: c.before, match: c.text, after: c.after}))];
     if (items.length) {
       const verdicts = await AI.judge(items, (done, total) => progress(`檢查容易轉錯的字（${done}／${total} 處）`));
@@ -317,11 +319,18 @@ async function runAiPass() {
       for (const it of items) {
         const v = verdicts.get(it.id);
         if (!v) continue;
+        let fix = (v.fix || '').trim(), reason = v.reason;
+        if (!v.ok && !plausibleFix(fix, it.match)) {
+          reason = `AI 的回覆格式有誤，改用詞庫建議${it.note ? '：' + it.note : ''}`;
+          // A garbled answer (a letter, a number, a whole sentence): fall back to the only
+          // dictionary suggestion, otherwise leave the word in step 2 for a person.
+          if ((it.options || []).length === 1) fix = it.options[0]; else continue;
+        }
         // Handled here either way, so it no longer waits in step 2.
         if (it.src.key) S.kept.add(it.src.key);
-        if (v.ok || !v.fix || v.fix === it.match) { S.ai.okCount++; continue; }
-        const k = it.match + '\u0000' + v.fix;
-        if (!groups.has(k)) groups.set(k, {kind: 'typo', from: it.match, to: v.fix, reason: v.reason, occ: []});
+        if (v.ok || !fix || fix === it.match) { S.ai.okCount++; continue; }
+        const k = it.match + '\u0000' + fix;
+        if (!groups.has(k)) groups.set(k, {kind: 'typo', from: it.match, to: fix, reason, occ: []});
         groups.get(k).occ.push(occOf(it.src));
       }
       proposals.push(...groups.values());
@@ -337,7 +346,7 @@ async function runAiPass() {
         .filter(t => typeof t === 'string' && /[\p{Script=Han}]/u.test(t) && t.length > 1);
       const byFrom = new Map();
       for (const g of found) {
-        if (!g.from || !g.to || g.from === g.to || byFrom.has(g.from) || g.from.length > 12 || g.to.length > 24 || !/[\p{Script=Han}]/u.test(g.from)) continue;
+        if (!g.from || !g.to || g.from === g.to || !/[\p{Script=Han}]/u.test(g.to) || byFrom.has(g.from) || g.from.length > 12 || g.to.length > 24 || !/[\p{Script=Han}]/u.test(g.from)) continue;
         if (names.some(n => n.includes(g.from) || g.from.includes(n))) continue;
         byFrom.set(g.from, g);
       }
@@ -384,6 +393,19 @@ function setProposals(list, state) {
   const verb = {accepted: '已套用', pending: '已恢復原狀', rejected: '已略過'}[state];
   toast(list.length === 1 ? `${verb}「${list[0].from}」${missed ? `（${missed} 處內容已變動而略過）` : ''}` : `${verb} ${list.length} 條${missed ? `（${missed} 處內容已變動而略過）` : ''}`);
 }
+// The user types the wording they want; it replaces the AI's suggestion and is applied.
+function editProposal(p, to) {
+  if (!to || to === p.from) { toast('請輸入要改成的文字'); return; }
+  pushHistory();
+  let missed = 0;
+  if (p.state === 'accepted') missed += swapProposal(p, false);
+  p.to = to; p.editing = false; p.edited = true;
+  missed += swapProposal(p, true);
+  p.state = 'accepted';
+  addSuggestion({find: p.from, to, note: '手動指定'}, false);
+  refresh();
+  toast(`已把「${p.from}」改成「${to}」${missed ? `（${missed} 處內容已變動而略過）` : ''}`);
+}
 function contextLine(o, shown, field = false) {
   const ctx = el('div', 'ctx');
   if (field) ctx.append(el('span', 'where', T.fieldLabel(S.draft, o.path) + '：'));
@@ -396,7 +418,7 @@ function proposalView(p) {
   head.append(el('span', 'badge kind-' + p.kind, p.kind === 'taiwan' ? '台灣用語' : '錯字'),
     el('span', 'prop-from', p.from), el('span', 'arrow', '→'), el('span', 'prop-to', p.to), el('span', 'muted', `${p.occ.length} 處`));
   body.append(head);
-  if (p.reason) body.append(el('div', 'prop-reason', p.reason));
+  if (p.reason) body.append(el('div', 'prop-reason', p.edited ? `你指定的寫法（AI 原本的理由：${p.reason}）` : p.reason));
   const shown = p.state === 'accepted' ? p.to : p.from;
   body.append(contextLine(p.occ[0], shown));
   if (p.occ.length > 1) {
@@ -408,9 +430,16 @@ function proposalView(p) {
     body.append(more);
   }
   const actions = el('div', 'occ-actions');
-  if (p.state === 'pending') actions.append(btn('接受', 'small primary', () => setProposals([p], 'accepted')), btn('不要', 'small', () => setProposals([p], 'rejected')));
+  if (p.editing) {
+    const input = el('input'); input.type = 'text'; input.value = p.to; input.className = 'prop-edit'; input.setAttribute('aria-label', `「${p.from}」要改成`);
+    const done = () => editProposal(p, input.value.trim());
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') done(); if (e.key === 'Escape') { p.editing = false; renderAi(); } });
+    actions.append(input, btn('改好並套用', 'small primary', done), btn('取消', 'small', () => { p.editing = false; renderAi(); }));
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+  } else if (p.state === 'pending') actions.append(btn('接受', 'small primary', () => setProposals([p], 'accepted')), btn('不要', 'small', () => setProposals([p], 'rejected')));
   else if (p.state === 'accepted') actions.append(el('span', 'state-tag good', '✓ 已套用'), btn('恢復原狀', 'small', () => setProposals([p], 'pending')));
   else actions.append(el('span', 'state-tag', '已略過'), btn('改成接受', 'small', () => setProposals([p], 'accepted')));
+  if (!p.editing) actions.append(btn('自己改', 'small', () => { p.editing = true; renderAi(); }));
   row.append(body, actions);
   return row;
 }

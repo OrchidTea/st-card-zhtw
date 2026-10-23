@@ -674,7 +674,7 @@ function convertV05(card, options = {}) {
 }
 
 setDictionary({"version":"2026-10-23","說明":"繁體化詞庫。autoFix＝轉換後一定錯、可直接自動修正的寫法；review＝可能對也可能錯、要人看前後文的詞；taiwan＝台灣慣用說法。find 預設是純文字；加上 \"regex\": true 時為正規表示式。修改後存檔、瀏覽器重新整理即生效。","autoFix":[{"find":"籤售","to":"簽售","note":"簽名售會"},{"find":"(?<![抽中求書標便牙竹靈上下])籤(?=錯|字|約|署|收|證|名|下來|好了|過了|完)","regex":true,"to":"簽","note":"簽名、簽約的「簽」"},{"find":"(?<=[不要待去來再沒會得就先])籤(?![詩筒]|文(?!件))","regex":true,"to":"簽","note":"「不簽」「要簽」「待簽」"},{"find":"髮(?=現|消息|訊息|簡訊|郵件|微信|生|呆|燒|抖|瘋|火|揮|展|送|佈|布|表|了一|過來|過去|癢|誓|動|言)","regex":true,"to":"發","note":"OpenCC 把「絲發」「直發」「總發」誤判成頭髮"},{"find":"(?<!頭)髮給","regex":true,"to":"發給","note":"發送給"},{"find":"迴歸(?!分析|模型|係數|方程|線|測試)","regex":true,"to":"回歸","note":"回歸（偶像 comeback／回到原處）；統計的迴歸分析不改"},{"find":"(?<![一兩二三四五六七八九十幾每那這哪某半單整0-9])隻(?=有|是|能|要|好|會|剩|想|不過|顧|怕|得|見|在乎|因為)","regex":true,"to":"只","note":"副詞「只」"},{"find":"不隻","to":"不只"},{"find":"批準","to":"批准"},{"find":"準許","to":"准許"},{"find":"準予","to":"准予"},{"find":"公裡","to":"公里"},{"find":"英裡","to":"英里"},{"find":"裡程","to":"里程"},{"find":"鄰裡","to":"鄰里"},{"find":"皇後","to":"皇后"},{"find":"天後","to":"天后"},{"find":"影後","to":"影后"},{"find":"歌後","to":"歌后"},{"find":"一見鐘情","to":"一見鍾情"},{"find":"鐘愛","to":"鍾愛"},{"find":"傢夥","to":"傢伙"},{"find":"輪迴復","to":"輪回覆","note":"「每輪回覆」被 OpenCC 切成「輪迴」"},{"find":"剋制","to":"克制","note":"台灣標準寫法為「克制」"},{"find":"喂(?=[食養奶飯藥飽水他她它牠你我]|生肉|過|了)","regex":true,"to":"餵","note":"餵食的「餵」；打招呼的「喂」不改"}],"review":[{"term":"冷麵","suggest":["冷面"],"note":"形容人冷淡、面無表情時是「冷面」；指食物（韓式冷麵）才是「冷麵」"},{"term":"不準","find":"不準(?!確|時|點)","regex":true,"suggest":["不准"],"note":"表示「禁止」時是「不准」；表示「不精確」時才是「不準」"},{"term":"幹","find":"(?<=有點|很|太|發|已經|曬|風|擦|烘|吹|口|舌|嗓子|喉嚨|眼睛|嘴唇)幹(?!活|嘛|什麼|練|部|事|掉|架|勁|嗎|道|線|得)","regex":true,"suggest":["乾"],"note":"表示「乾燥」時是「乾」；表示「做」時才是「幹」"},{"term":"酒店","suggest":["飯店"],"note":"台灣多說「飯店」；店名（如半島酒店）或指有陪酒的場所時應保留"},{"term":"信息","suggest":["訊息","資訊"],"note":"一則消息用「訊息」；資料、內容用「資訊」（例如「基本資訊」）"},{"term":"質量","suggest":["品質"],"note":"物理學的質量不改"},{"term":"發小","suggest":["青梅竹馬"],"note":"作者可能刻意保留原用語"},{"term":"髮小","suggest":["青梅竹馬"],"note":"OpenCC 誤轉的「發小」；作者可能刻意保留原用語"},{"term":"自制","find":"自制(?=的|品|作|成)","regex":true,"suggest":["自製"],"note":"自己做的是「自製」；自我控制（自制力）才是「自制」"}],"taiwan":[["視頻","影片"],["視頻通話","視訊通話"],["視頻會議","視訊會議"],["網絡","網路"],["文件夾","資料夾"],["賬號","帳號"],["模塊","模組"],["屏幕","螢幕"],["默認","預設"],["點贊","按讚"],["點讚","按讚"],["現實里","現實裡"],["軟件","軟體"],["硬件","硬體"],["鼠標","滑鼠"],["U盤","隨身碟"],["服務器","伺服器"],["數據庫","資料庫"],["菜單欄","選單列"],["導航欄","導覽列"],["狀態欄","狀態列"],["打印","列印"],["短信","簡訊"],["激活","啟用"],["博客","部落格"],["鏈接","連結"]],"aiScanChars":"髮麵籤幹乾隻準迴範鬆衝徵","knownGood":["頭髮","短髮","長髮","白髮","黑髮","銀髮","碎髮","亂髮","髮絲","髮箍","髮型","髮色","髮質","髮梢","髮頂","髮蠟","髮指","理髮","捲髮","泡麵","麵包","麵條","麵粉","意麵","拉麵","湯麵","麵餅","雞蛋麵","火雞麵","標籤","書籤","便籤","抽籤","中籤","牙籤","乾淨","乾燥","乾澀","擦乾","乾杯","餅乾","幹活","幹嘛","幹什麼","幹練","主幹","一隻","兩隻","那隻","這隻","另一隻","隻手","準備","標準","精準","準確","準時","對準","音準","水準","規範","範圍","示範","典範","放鬆","輕鬆","寬鬆","鬆開","蓬鬆","鬆弛","製作","製造","定製","縫製","週末","週年","週期","一週","每週","上週","分鐘","秒鐘","鐘頭","關係","聯繫","維繫","以後","之後","後來","然後","最後","後面","背後","幕後","後臺","這裡","那裡","哪裡","裡面","家裡","心裡","眼裡","手裡","舞臺","平臺","電視臺","陽臺","臺下","臺上","佈局","發佈","分佈","摺疊","傢俱","傢伙","品嚐","慾望","佔有慾","迴避","一乾二淨","抽乾","乾了","衝擊","緩衝","衝動","衝突","衝向","衝進","衝出","象徵","特徵","徵求","鬆散","鬆懈","鬆手","鬆了","寬鬆","最大隻","大隻","乾乾淨淨","發乾","半乾","摸準"]});
-globalThis.CardTranslator={version:"0.6.0",convert:convertV05,legacyConvert:Ee,inspect:Se,describe:_e,readPng:Ne,writePng:Pe,textFields,fieldAt,setField,editableField,previewReplacement,validateManual,technicalIntegrity,reviewScan,replaceAt,replaceAllReview,aiCandidates,locateAll,swapInContext,proseChunks,nameCandidates,existingNameButtons,withNameButtons,fieldLabel,mirrorField,setDictionary,getDictionary,compileDictionary,frozenTokens,U};
+globalThis.CardTranslator={version:"0.6.1",convert:convertV05,legacyConvert:Ee,inspect:Se,describe:_e,readPng:Ne,writePng:Pe,textFields,fieldAt,setField,editableField,previewReplacement,validateManual,technicalIntegrity,reviewScan,replaceAt,replaceAllReview,aiCandidates,locateAll,swapInContext,proseChunks,nameCandidates,existingNameButtons,withNameButtons,fieldLabel,mirrorField,setDictionary,getDictionary,compileDictionary,frozenTokens,U};
 })();
 // Bring-your-own-key AI helper. The key lives only in this browser (localStorage when
 // "remember" is ticked, otherwise memory); requests go straight to the chosen provider.
@@ -769,7 +769,7 @@ const TranslatorAI = (() => {
     '你是台灣繁體中文的校對員。使用者給你的是簡體中文角色卡經 OpenCC 自動轉成台灣繁體後的片段。',
     '每筆片段中 ⟦ ⟧ 框起來的字詞是自動轉換時容易出錯的地方。請依前後文判斷 ⟦ ⟧ 內的寫法在這個語境是否正確。',
     '只判斷錯字與誤轉（例如「頭髮／發現」「冷面／冷麵」「不准／不準」「乾／幹」「簽／籤」），不要改寫風格；作者刻意的用語、專有名詞、店名視為正確。',
-    '若有提供候選寫法，優先從候選中選。修正只替換 ⟦ ⟧ 內的文字。',
+    '若有提供候選寫法，優先從候選中選。修正只替換 ⟦ ⟧ 內的文字，fix 必須是要放進 ⟦ ⟧ 的中文字本身，不要填代號或字母。',
     '只輸出 JSON 陣列，不要其他文字：[{"id":"編號","ok":true或false,"fix":"不正確時的正確寫法，正確時留空字串","reason":"20字內理由"}]'
   ].join('\n');
 
@@ -960,13 +960,13 @@ function updateConvertButton() {
 // ---------- state helpers ----------
 function pushHistory() {
   S.history.push({draft: T.U(S.draft), base: T.U(S.base), edits: [...S.edits], kept: new Set(S.kept), resolved: new Map(S.resolved),
-    aiStates: S.ai ? S.ai.proposals.map(p => p.state) : null});
+    aiStates: S.ai ? S.ai.proposals.map(p => ({state: p.state, to: p.to})) : null});
   if (S.history.length > 40) S.history.shift();
 }
 function undo() {
   const last = S.history.pop(); if (!last) return;
   Object.assign(S, {draft: last.draft, base: last.base, edits: last.edits, kept: last.kept, resolved: last.resolved});
-  if (S.ai && last.aiStates && last.aiStates.length === S.ai.proposals.length) S.ai.proposals.forEach((p, i) => { p.state = last.aiStates[i]; });
+  if (S.ai && last.aiStates && last.aiStates.length === S.ai.proposals.length) S.ai.proposals.forEach((p, i) => { p.state = last.aiStates[i].state; p.to = last.aiStates[i].to; p.editing = false; });
   S.aiScan = null; refresh(); toast('已復原上一步');
 }
 const mirrorOf = path => { const m = path.match(/^\$\/data\/(name|description|personality|scenario|first_mes|mes_example)$/u); return m ? '$/' + m[1] : null; };
@@ -1133,6 +1133,8 @@ function applyAiTerm(group) {
 // proposal can be restored. Changes are applied by the page, inside protected-text rules.
 const aiPendingCount = () => S.ai && S.ai.status === 'done' ? S.ai.proposals.filter(p => p.state === 'pending').length : 0;
 const escapeRe = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// A correction must be Chinese text of about the same length as what it replaces.
+const plausibleFix = (fix, match) => !!fix && /[\p{Script=Han}]/u.test(fix) && !/[A-Za-z0-9]/u.test(fix) && [...fix].length <= [...match].length + 2;
 const occOf = src => ({path: src.path, index: src.index, text: src.text, before: String(src.before || '').slice(-8), after: String(src.after || '').slice(0, 8), key: src.key});
 
 async function runAiPass() {
@@ -1147,9 +1149,9 @@ async function runAiPass() {
   const tokens = S.result.frozen || [], proposals = [];
   try {
     // 1. Characters OpenCC often gets wrong, and words whose meaning depends on context.
-    const review = S.review.flatMap(g => visibleItems(g).map(i => ({src: i, options: g.suggest})));
+    const review = S.review.flatMap(g => visibleItems(g).map(i => ({src: i, options: g.suggest, note: g.note})));
     const candidates = T.aiCandidates(S.draft, tokens, S.review, 400);
-    const items = [...review.map((x, n) => ({id: 'r' + n, src: x.src, before: x.src.before, match: x.src.text, after: x.src.after, options: x.options})),
+    const items = [...review.map((x, n) => ({id: 'r' + n, src: x.src, before: x.src.before, match: x.src.text, after: x.src.after, options: x.options, note: x.note})),
       ...candidates.map(c => ({id: c.id, src: c, before: c.before, match: c.text, after: c.after}))];
     if (items.length) {
       const verdicts = await AI.judge(items, (done, total) => progress(`檢查容易轉錯的字（${done}／${total} 處）`));
@@ -1157,11 +1159,18 @@ async function runAiPass() {
       for (const it of items) {
         const v = verdicts.get(it.id);
         if (!v) continue;
+        let fix = (v.fix || '').trim(), reason = v.reason;
+        if (!v.ok && !plausibleFix(fix, it.match)) {
+          reason = `AI 的回覆格式有誤，改用詞庫建議${it.note ? '：' + it.note : ''}`;
+          // A garbled answer (a letter, a number, a whole sentence): fall back to the only
+          // dictionary suggestion, otherwise leave the word in step 2 for a person.
+          if ((it.options || []).length === 1) fix = it.options[0]; else continue;
+        }
         // Handled here either way, so it no longer waits in step 2.
         if (it.src.key) S.kept.add(it.src.key);
-        if (v.ok || !v.fix || v.fix === it.match) { S.ai.okCount++; continue; }
-        const k = it.match + '\u0000' + v.fix;
-        if (!groups.has(k)) groups.set(k, {kind: 'typo', from: it.match, to: v.fix, reason: v.reason, occ: []});
+        if (v.ok || !fix || fix === it.match) { S.ai.okCount++; continue; }
+        const k = it.match + '\u0000' + fix;
+        if (!groups.has(k)) groups.set(k, {kind: 'typo', from: it.match, to: fix, reason, occ: []});
         groups.get(k).occ.push(occOf(it.src));
       }
       proposals.push(...groups.values());
@@ -1177,7 +1186,7 @@ async function runAiPass() {
         .filter(t => typeof t === 'string' && /[\p{Script=Han}]/u.test(t) && t.length > 1);
       const byFrom = new Map();
       for (const g of found) {
-        if (!g.from || !g.to || g.from === g.to || byFrom.has(g.from) || g.from.length > 12 || g.to.length > 24 || !/[\p{Script=Han}]/u.test(g.from)) continue;
+        if (!g.from || !g.to || g.from === g.to || !/[\p{Script=Han}]/u.test(g.to) || byFrom.has(g.from) || g.from.length > 12 || g.to.length > 24 || !/[\p{Script=Han}]/u.test(g.from)) continue;
         if (names.some(n => n.includes(g.from) || g.from.includes(n))) continue;
         byFrom.set(g.from, g);
       }
@@ -1224,6 +1233,19 @@ function setProposals(list, state) {
   const verb = {accepted: '已套用', pending: '已恢復原狀', rejected: '已略過'}[state];
   toast(list.length === 1 ? `${verb}「${list[0].from}」${missed ? `（${missed} 處內容已變動而略過）` : ''}` : `${verb} ${list.length} 條${missed ? `（${missed} 處內容已變動而略過）` : ''}`);
 }
+// The user types the wording they want; it replaces the AI's suggestion and is applied.
+function editProposal(p, to) {
+  if (!to || to === p.from) { toast('請輸入要改成的文字'); return; }
+  pushHistory();
+  let missed = 0;
+  if (p.state === 'accepted') missed += swapProposal(p, false);
+  p.to = to; p.editing = false; p.edited = true;
+  missed += swapProposal(p, true);
+  p.state = 'accepted';
+  addSuggestion({find: p.from, to, note: '手動指定'}, false);
+  refresh();
+  toast(`已把「${p.from}」改成「${to}」${missed ? `（${missed} 處內容已變動而略過）` : ''}`);
+}
 function contextLine(o, shown, field = false) {
   const ctx = el('div', 'ctx');
   if (field) ctx.append(el('span', 'where', T.fieldLabel(S.draft, o.path) + '：'));
@@ -1236,7 +1258,7 @@ function proposalView(p) {
   head.append(el('span', 'badge kind-' + p.kind, p.kind === 'taiwan' ? '台灣用語' : '錯字'),
     el('span', 'prop-from', p.from), el('span', 'arrow', '→'), el('span', 'prop-to', p.to), el('span', 'muted', `${p.occ.length} 處`));
   body.append(head);
-  if (p.reason) body.append(el('div', 'prop-reason', p.reason));
+  if (p.reason) body.append(el('div', 'prop-reason', p.edited ? `你指定的寫法（AI 原本的理由：${p.reason}）` : p.reason));
   const shown = p.state === 'accepted' ? p.to : p.from;
   body.append(contextLine(p.occ[0], shown));
   if (p.occ.length > 1) {
@@ -1248,9 +1270,16 @@ function proposalView(p) {
     body.append(more);
   }
   const actions = el('div', 'occ-actions');
-  if (p.state === 'pending') actions.append(btn('接受', 'small primary', () => setProposals([p], 'accepted')), btn('不要', 'small', () => setProposals([p], 'rejected')));
+  if (p.editing) {
+    const input = el('input'); input.type = 'text'; input.value = p.to; input.className = 'prop-edit'; input.setAttribute('aria-label', `「${p.from}」要改成`);
+    const done = () => editProposal(p, input.value.trim());
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') done(); if (e.key === 'Escape') { p.editing = false; renderAi(); } });
+    actions.append(input, btn('改好並套用', 'small primary', done), btn('取消', 'small', () => { p.editing = false; renderAi(); }));
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+  } else if (p.state === 'pending') actions.append(btn('接受', 'small primary', () => setProposals([p], 'accepted')), btn('不要', 'small', () => setProposals([p], 'rejected')));
   else if (p.state === 'accepted') actions.append(el('span', 'state-tag good', '✓ 已套用'), btn('恢復原狀', 'small', () => setProposals([p], 'pending')));
   else actions.append(el('span', 'state-tag', '已略過'), btn('改成接受', 'small', () => setProposals([p], 'accepted')));
+  if (!p.editing) actions.append(btn('自己改', 'small', () => { p.editing = true; renderAi(); }));
   row.append(body, actions);
   return row;
 }
