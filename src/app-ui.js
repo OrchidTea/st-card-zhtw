@@ -603,7 +603,14 @@ function renderSearch() {
   if (!fields.length) {
     const before = T.textFields(S.input).filter(f => !T.mirrorField(f.path, S.input) && f.value.includes(q));
     if (before.length) {
-      $('searchSummary').textContent = `「${q}」只出現在轉換前的原文（${before.length} 個欄位），下面列出轉換後的對應內容。`;
+      // The user typed the simplified spelling: offer the converted spelling, which is what can be replaced.
+      const named = (S.result.nameMapping || []).find(n => n.before === q)?.after;
+      const converted = [named, T.toTraditional(q)].find(x => x && x !== q && JSON.stringify(S.draft).includes(x));
+      const summary = $('searchSummary'); summary.replaceChildren();
+      if (converted) {
+        summary.append(document.createTextNode(`「${q}」是轉換前的寫法，轉換後已變成「${converted}」。要修改請搜尋轉換後的寫法：`),
+          btn(`改找「${converted}」`, 'small primary', () => { $('findText').value = converted; if (!$('replaceText').value) $('replaceText').value = q; renderSearch(); }));
+      } else summary.textContent = `「${q}」只出現在轉換前的原文（${before.length} 個欄位），下面列出轉換後的對應內容。`;
       for (const f of before.slice(0, 30)) {
         const card = el('details', 'field'); card.open = true;
         const sum = el('summary'); sum.append(el('span', 'title', T.fieldLabel(S.draft, f.path))); card.append(sum);
