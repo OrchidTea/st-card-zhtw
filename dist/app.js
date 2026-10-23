@@ -121,7 +121,7 @@ function styleSymbols(card) {
   const symbols=new Set();
   for(const {value} of V(card)) {
     for(const m of value.matchAll(/\b(?:class|id)\s*=\s*["']([^"']+)["']/gu)) for(const token of m[1].split(/\s+/u)) if(te(token)) symbols.add(token);
-    for(const m of value.matchAll(/[.#]([\p{L}_-][\p{L}\p{N}_-]*)|(--[\p{L}_-][\p{L}\p{N}_-]*)/gu)) if(te(m[1]||m[2])) symbols.add(m[1]||m[2]);
+    for(const m of value.matchAll(/(?<![\p{L}\p{N}])[.#]([\p{L}_-][\p{L}\p{N}_-]*)|(--[\p{L}_-][\p{L}\p{N}_-]*)/gu)) if(te(m[1]||m[2])) symbols.add(m[1]||m[2]);
   }
   return [...symbols];
 }
@@ -530,6 +530,123 @@ function aiCandidates(doc, tokens, reviewGroups = [], limit = 200) {
   return items;
 }
 
+// ---------- one-click AI localisation helpers ----------
+// Every unprotected occurrence of `re` (must be global) in editable, non-mirror fields.
+function locateAll(doc, re, tokens) {
+  const out = [];
+  for (const field of textFields(doc)) {
+    if (!editableField(doc, field.path) || mirrorField(field.path, doc) || !/[\p{Script=Han}]/u.test(field.value)) continue;
+    const ranges = protectedRanges(field.value, tokens);
+    re.lastIndex = 0;
+    for (const m of field.value.matchAll(re)) {
+      if (!m[0] || overlaps(ranges, m.index, m.index + m[0].length)) continue;
+      out.push({path: field.path, index: m.index, text: m[0], ...snippet(field.value, m.index, m[0].length, 8)});
+    }
+  }
+  return out;
+}
+// Replace `from` with `to` at one recorded occurrence, found again by its surrounding text
+// (positions drift as other changes are applied). Returns false when it can no longer be found.
+function swapInContext(doc, occ, from, to) {
+  const value = fieldAt(doc, occ.path);
+  if (typeof value !== 'string') return false;
+  const b = occ.before || '', a = occ.after || '';
+  // Neighbouring words may have been changed too, so the context is relaxed step by step;
+  // the last resort is the bare word, but only close to where it was recorded.
+  const tries = [[b, a], [b.slice(-3), a.slice(0, 3)], [b.slice(-1), a.slice(0, 1)], [b.slice(-2), ''], ['', a.slice(0, 2)], ['', '']];
+  for (const [x, y] of tries) {
+    const needle = x + from + y, bare = !x && !y;
+    let best = -1, at = value.indexOf(needle);
+    while (at !== -1) {
+      if (best === -1 || Math.abs(at + x.length - occ.index) < Math.abs(best + x.length - occ.index)) best = at;
+      at = value.indexOf(needle, at + 1);
+    }
+    if (best !== -1 && bare && Math.abs(best - occ.index) > 40) best = -1;
+    if (best !== -1) {
+      const start = best + x.length;
+      setField(doc, occ.path, value.slice(0, start) + to + value.slice(start + from.length));
+      return true;
+    }
+  }
+  return false;
+}
+// Readable text of the card in chunks for the AI wording pass. Code fields contribute only
+// their Chinese text runs; URLs never leave the page; duplicate texts are sent once.
+function proseChunks(doc, size = 5000) {
+  const seen = new Set(), pieces = [];
+  for (const field of textFields(doc)) {
+    if (!editableField(doc, field.path) || mirrorField(field.path, doc) || !/[\p{Script=Han}]/u.test(field.value)) continue;
+    if (/\/(?:findRegex|keys\/\d+|secondary_keys\/\d+|keysecondary\/\d+)$/u.test(field.path)) continue;
+    let text = field.value.replace(/https?:\/\/[^\s"'<>`)]+/gu, '');
+    if (codeLike(text)) text = [...text.matchAll(/[^<>{}\n"'`=;]*[\p{Script=Han}][^<>{}\n"'`=;]*/gu)].map(m => m[0].trim()).filter(Boolean).join('\n');
+    text = text.trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    for (const line of text.split('\n')) for (let i = 0; i < line.length; i += size) pieces.push(line.slice(i, i + size));
+    pieces.push('');
+  }
+  const chunks = [];
+  let current = '';
+  for (const piece of pieces) {
+    if (current && current.length + piece.length + 1 > size) { chunks.push(current.trim()); current = ''; }
+    current += piece + '\n';
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
+}
+
+// ---------- character-name quick buttons (TavernHelper "輸入助手") ----------
+const quickInputUrl = 'https://testingcf.jsdelivr.net/gh/StageDog/tavern_resource/dist/酒馆助手/输入助手/index.js';
+const isQuickInput = script => typeof script?.content === 'string' && script.content.includes('/输入助手/index.js');
+// Buttons that simply type their own label are character names; others (quotes, brackets) are kept as they are.
+const nameButton = b => b && typeof b.name === 'string' && b.content === b.name && /^[\p{L}\p{N}·・ ]+$/u.test(b.name);
+// Name buttons already in the card's 輸入助手 script, in their original order.
+const existingNameButtons = doc => M(doc).filter(isQuickInput).flatMap(s => (s.data?.buttons || []).filter(nameButton).map(b => b.name));
+function nameCandidates(doc) {
+  const all = JSON.stringify(E(doc) || doc), found = new Map();
+  const add = (raw, source) => {
+    const n = String(raw || '').trim();
+    if (n && n.length <= 12 && /^[\p{Script=Han}·・]+$/u.test(n) && !found.has(n)) found.set(n, source);
+  };
+  for (const s of M(doc)) if (isQuickInput(s)) for (const b of s.data?.buttons || []) if (nameButton(b)) add(b.name, '已有按鈕');
+  for (const f of textFields(doc)) {
+    if (mirrorField(f.path, doc)) continue;
+    for (const m of f.value.matchAll(/^\s*(?:-\s*)?(?:name|名字|姓名|角色名|中文名|Chinese name)\s*[:：]\s*["'「]?([\p{Script=Han}·・]{1,12})/gimu)) add(m[1], '角色設定');
+  }
+  // World-book triggers that end the entry title ("狼族哥哥拉克倫", "拉克倫NSFW") are usually names.
+  for (const entry of R(doc)) {
+    const title = String(entry?.comment || entry?.name || '').replace(/[^\p{Script=Han}·・]+$/u, '');
+    for (const key of entry?.keys || []) if (typeof key === 'string' && key.trim().length > 1 && title.endsWith(key.trim())) add(key, '世界書');
+  }
+  return [...found].map(([name, source]) => ({name, source, count: all.split(name).length - 1}))
+    .filter(x => x.count >= 2 || x.source === '已有按鈕').sort((a, b) => b.count - a.count).slice(0, 40);
+}
+// Returns a copy of the card with name buttons added to (or updated in) its 輸入助手 script.
+function withNameButtons(doc, names, makeId = () => 'name-buttons-' + Date.now().toString(36)) {
+  const list = [...new Set(names.map(n => String(n).trim()).filter(Boolean))];
+  if (!list.length) return doc;
+  const out = U(doc), data = E(out);
+  if (!data.extensions || typeof data.extensions !== 'object') data.extensions = {};
+  const ext = data.extensions;
+  let scripts;
+  if (Array.isArray(ext.tavern_helper?.scripts)) scripts = ext.tavern_helper.scripts;
+  else if (Array.isArray(ext.TavernHelper_scripts)) scripts = ext.TavernHelper_scripts;
+  else { ext.tavern_helper = {...(ext.tavern_helper || {}), scripts: [], variables: ext.tavern_helper?.variables || {}}; scripts = ext.tavern_helper.scripts; }
+  const entry = n => ({name: n, enable: true, description: n, content: n, cursor_position: [...n].length, insert_position: 'as_is'});
+  let script = scripts.find(isQuickInput);
+  if (!script) {
+    script = {type: 'script', enabled: true, name: '角色名輸入', id: makeId(),
+      info: '# 角色名輸入\n\n聊天時點輸入框上方的角色名，就會在游標位置插入名字。\n\n- 使用 StageDog／tavern_resource 的「輸入助手」（作者：司马咩咩、青空莉想做舞台少女的狗）\n- 由「角色卡台灣繁中工具」加入；需要安裝酒館助手',
+      content: `import '${quickInputUrl}'`, button: {enabled: true, buttons: []}, data: {buttons: []}, export_with: {data: true, button: true}};
+    scripts.push(script);
+  }
+  const kept = (script.data?.buttons || []).filter(b => !nameButton(b));
+  script.data = {...(script.data || {}), buttons: [...kept, ...list.map(entry)]};
+  script.button = {...(script.button || {}), enabled: true, buttons: script.data.buttons.map(b => ({name: b.name, visible: true}))};
+  script.enabled = true;
+  return out;
+}
+
 const regionalAudio = /https?:\/\/(?:[\w-]+\.)*(?:music\.163\.com|music\.126\.net|y\.qq\.com|qqmusic\.qq\.com|kuwo\.cn|kugou\.com|ximalaya\.com)[^\s"'<>]*/giu;
 function audioNotes(card) {
   const notes = new Map();
@@ -557,7 +674,7 @@ function convertV05(card, options = {}) {
 }
 
 setDictionary({"version":"2026-10-23","說明":"繁體化詞庫。autoFix＝轉換後一定錯、可直接自動修正的寫法；review＝可能對也可能錯、要人看前後文的詞；taiwan＝台灣慣用說法。find 預設是純文字；加上 \"regex\": true 時為正規表示式。修改後存檔、瀏覽器重新整理即生效。","autoFix":[{"find":"籤售","to":"簽售","note":"簽名售會"},{"find":"(?<![抽中求書標便牙竹靈上下])籤(?=錯|字|約|署|收|證|名|下來|好了|過了|完)","regex":true,"to":"簽","note":"簽名、簽約的「簽」"},{"find":"(?<=[不要待去來再沒會得就先])籤(?![詩筒]|文(?!件))","regex":true,"to":"簽","note":"「不簽」「要簽」「待簽」"},{"find":"髮(?=現|消息|訊息|簡訊|郵件|微信|生|呆|燒|抖|瘋|火|揮|展|送|佈|布|表|了一|過來|過去|癢|誓|動|言)","regex":true,"to":"發","note":"OpenCC 把「絲發」「直發」「總發」誤判成頭髮"},{"find":"(?<!頭)髮給","regex":true,"to":"發給","note":"發送給"},{"find":"迴歸(?!分析|模型|係數|方程|線|測試)","regex":true,"to":"回歸","note":"回歸（偶像 comeback／回到原處）；統計的迴歸分析不改"},{"find":"(?<![一兩二三四五六七八九十幾每那這哪某半單整0-9])隻(?=有|是|能|要|好|會|剩|想|不過|顧|怕|得|見|在乎|因為)","regex":true,"to":"只","note":"副詞「只」"},{"find":"不隻","to":"不只"},{"find":"批準","to":"批准"},{"find":"準許","to":"准許"},{"find":"準予","to":"准予"},{"find":"公裡","to":"公里"},{"find":"英裡","to":"英里"},{"find":"裡程","to":"里程"},{"find":"鄰裡","to":"鄰里"},{"find":"皇後","to":"皇后"},{"find":"天後","to":"天后"},{"find":"影後","to":"影后"},{"find":"歌後","to":"歌后"},{"find":"一見鐘情","to":"一見鍾情"},{"find":"鐘愛","to":"鍾愛"},{"find":"傢夥","to":"傢伙"},{"find":"輪迴復","to":"輪回覆","note":"「每輪回覆」被 OpenCC 切成「輪迴」"},{"find":"剋制","to":"克制","note":"台灣標準寫法為「克制」"},{"find":"喂(?=[食養奶飯藥飽水他她它牠你我]|生肉|過|了)","regex":true,"to":"餵","note":"餵食的「餵」；打招呼的「喂」不改"}],"review":[{"term":"冷麵","suggest":["冷面"],"note":"形容人冷淡、面無表情時是「冷面」；指食物（韓式冷麵）才是「冷麵」"},{"term":"不準","find":"不準(?!確|時|點)","regex":true,"suggest":["不准"],"note":"表示「禁止」時是「不准」；表示「不精確」時才是「不準」"},{"term":"幹","find":"(?<=有點|很|太|發|已經|曬|風|擦|烘|吹|口|舌|嗓子|喉嚨|眼睛|嘴唇)幹(?!活|嘛|什麼|練|部|事|掉|架|勁|嗎|道|線|得)","regex":true,"suggest":["乾"],"note":"表示「乾燥」時是「乾」；表示「做」時才是「幹」"},{"term":"酒店","suggest":["飯店"],"note":"台灣多說「飯店」；店名（如半島酒店）或指有陪酒的場所時應保留"},{"term":"信息","suggest":["訊息","資訊"],"note":"一則消息用「訊息」；資料、內容用「資訊」（例如「基本資訊」）"},{"term":"質量","suggest":["品質"],"note":"物理學的質量不改"},{"term":"發小","suggest":["青梅竹馬"],"note":"作者可能刻意保留原用語"},{"term":"髮小","suggest":["青梅竹馬"],"note":"OpenCC 誤轉的「發小」；作者可能刻意保留原用語"},{"term":"自制","find":"自制(?=的|品|作|成)","regex":true,"suggest":["自製"],"note":"自己做的是「自製」；自我控制（自制力）才是「自制」"}],"taiwan":[["視頻","影片"],["視頻通話","視訊通話"],["視頻會議","視訊會議"],["網絡","網路"],["文件夾","資料夾"],["賬號","帳號"],["模塊","模組"],["屏幕","螢幕"],["默認","預設"],["點贊","按讚"],["點讚","按讚"],["現實里","現實裡"],["軟件","軟體"],["硬件","硬體"],["鼠標","滑鼠"],["U盤","隨身碟"],["服務器","伺服器"],["數據庫","資料庫"],["菜單欄","選單列"],["導航欄","導覽列"],["狀態欄","狀態列"],["打印","列印"],["短信","簡訊"],["激活","啟用"],["博客","部落格"],["鏈接","連結"]],"aiScanChars":"髮麵籤幹乾隻準迴範鬆衝徵","knownGood":["頭髮","短髮","長髮","白髮","黑髮","銀髮","碎髮","亂髮","髮絲","髮箍","髮型","髮色","髮質","髮梢","髮頂","髮蠟","髮指","理髮","捲髮","泡麵","麵包","麵條","麵粉","意麵","拉麵","湯麵","麵餅","雞蛋麵","火雞麵","標籤","書籤","便籤","抽籤","中籤","牙籤","乾淨","乾燥","乾澀","擦乾","乾杯","餅乾","幹活","幹嘛","幹什麼","幹練","主幹","一隻","兩隻","那隻","這隻","另一隻","隻手","準備","標準","精準","準確","準時","對準","音準","水準","規範","範圍","示範","典範","放鬆","輕鬆","寬鬆","鬆開","蓬鬆","鬆弛","製作","製造","定製","縫製","週末","週年","週期","一週","每週","上週","分鐘","秒鐘","鐘頭","關係","聯繫","維繫","以後","之後","後來","然後","最後","後面","背後","幕後","後臺","這裡","那裡","哪裡","裡面","家裡","心裡","眼裡","手裡","舞臺","平臺","電視臺","陽臺","臺下","臺上","佈局","發佈","分佈","摺疊","傢俱","傢伙","品嚐","慾望","佔有慾","迴避","一乾二淨","抽乾","乾了","衝擊","緩衝","衝動","衝突","衝向","衝進","衝出","象徵","特徵","徵求","鬆散","鬆懈","鬆手","鬆了","寬鬆","最大隻","大隻","乾乾淨淨","發乾","半乾","摸準"]});
-globalThis.CardTranslator={version:"0.5.5",convert:convertV05,legacyConvert:Ee,inspect:Se,describe:_e,readPng:Ne,writePng:Pe,textFields,fieldAt,setField,editableField,previewReplacement,validateManual,technicalIntegrity,reviewScan,replaceAt,replaceAllReview,aiCandidates,fieldLabel,mirrorField,setDictionary,getDictionary,compileDictionary,frozenTokens,U};
+globalThis.CardTranslator={version:"0.6.0",convert:convertV05,legacyConvert:Ee,inspect:Se,describe:_e,readPng:Ne,writePng:Pe,textFields,fieldAt,setField,editableField,previewReplacement,validateManual,technicalIntegrity,reviewScan,replaceAt,replaceAllReview,aiCandidates,locateAll,swapInContext,proseChunks,nameCandidates,existingNameButtons,withNameButtons,fieldLabel,mirrorField,setDictionary,getDictionary,compileDictionary,frozenTokens,U};
 })();
 // Bring-your-own-key AI helper. The key lives only in this browser (localStorage when
 // "remember" is ticked, otherwise memory); requests go straight to the chosen provider.
@@ -587,14 +704,31 @@ const TranslatorAI = (() => {
   }
   const ready = () => !!(settings.key && settings.model && (settings.provider !== 'openai' || settings.base));
 
+  // Free tiers limit requests per minute; wait and retry a couple of times before giving up.
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   async function request(system, user) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await requestOnce(system, user); }
+      catch (error) {
+        if (!error.retryAfter || attempt >= 2) throw error;
+        if (TranslatorAI.onWait) TranslatorAI.onWait(error.retryAfter);
+        await sleep(error.retryAfter * 1000);
+      }
+    }
+  }
+  async function requestOnce(system, user) {
     const {provider, model, key} = settings;
     let response, data;
     const fail = async res => {
       let detail = '';
       try { const j = await res.json(); detail = j?.error?.message || j?.message || ''; } catch { /* ignore */ }
       const hint = res.status === 401 || res.status === 403 ? '金鑰無效或沒有權限' : res.status === 404 ? '模型名稱或網址錯誤' : res.status === 429 ? '額度用完或請求太頻繁' : '服務商回應錯誤';
-      throw new Error(`${hint}（HTTP ${res.status}）${detail ? '：' + detail.slice(0, 160) : ''}`);
+      const error = new Error(`${hint}（HTTP ${res.status}）${detail ? '：' + detail.slice(0, 160) : ''}`);
+      if (res.status === 429 && !/quota exceeded.*per day|PerDay|limit: 0\b/iu.test(detail)) {
+        const header = Number(res.headers.get('retry-after')), hinted = Number((detail.match(/retry in ([\d.]+)s/iu) || [])[1]);
+        error.retryAfter = Math.min(60, Math.ceil(header || hinted || 20));
+      }
+      throw error;
     };
     try {
       if (provider === 'anthropic') {
@@ -661,11 +795,47 @@ const TranslatorAI = (() => {
     }
     return results;
   }
+  // One-click wording pass: the AI lists Mainland wording found in each chunk with the
+  // Taiwan equivalent. The page applies the list itself, so names and code stay protected.
+  const wordingSystem = [
+    '你是台灣繁體中文的在地化編輯。使用者給你的是簡體中文角色卡用 OpenCC 轉成繁體字之後的文字：字形已經是繁體，但用詞可能還是中國大陸的說法。',
+    '請找出台灣讀者會覺得是「大陸用語」的詞，給出台灣常用的說法。例如：質量→品質、信息→訊息、激活→啟用、打印→列印、出租車→計程車、視頻→影片。',
+    '規則：',
+    '1. from 必須是原文裡逐字出現的詞（2～8 字），to 是台灣說法。',
+    '2. 只換詞，不改寫句子、不潤飾文風、不改標點。',
+    '3. 角色名、地名、組織名、作者自創的專有名詞、刻意的口語、方言、網路用語，一律不要改。',
+    '4. 同一個詞在文中若有不同意思，或台灣也常這樣說，就不要列。',
+    '5. 若看到 OpenCC 轉錯的字（例如「頭發」應為「頭髮」、「剋制」應為「克制」），也用同樣格式列出，from 要包含前後字以免誤改。',
+    '6. 不確定就不要列。',
+    '只輸出 JSON 陣列，不要其他文字：[{"from":"原文詞","to":"台灣說法","reason":"15字內理由"}]；沒有就輸出 []。'
+  ].join('\n');
+  async function wording(chunks, onProgress) {
+    const found = [];
+    let unreadable = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      const text = await request(wordingSystem, chunks[i]);
+      // A malformed answer for one chunk should not throw away the others.
+      let list = null;
+      try { const start = text.indexOf('['), end = text.lastIndexOf(']'); if (start !== -1 && end > start) list = JSON.parse(text.slice(start, end + 1)); } catch { list = null; }
+      if (!Array.isArray(list)) unreadable++;
+      else for (const x of list) if (x && typeof x.from === 'string' && typeof x.to === 'string')
+        found.push({from: x.from.trim(), to: x.to.trim(), reason: typeof x.reason === 'string' ? x.reason.slice(0, 40) : ''});
+      if (onProgress) onProgress(i + 1, chunks.length);
+    }
+    return {found, unreadable};
+  }
+  async function characterNames(text) {
+    const answer = await request('你會閱讀角色卡。請列出這段文字裡會在故事中登場的角色名字（人名或固定稱呼），不要列 {{user}}、種族、地名、組織、物品。只輸出 JSON 字串陣列，例如 ["林小雨","王大明"]；沒有就輸出 []。', text);
+    const start = answer.indexOf('['), end = answer.lastIndexOf(']');
+    if (start === -1 || end <= start) throw new Error('AI 回覆格式無法解析');
+    const list = JSON.parse(answer.slice(start, end + 1));
+    return Array.isArray(list) ? [...new Set(list.filter(x => typeof x === 'string').map(x => x.trim()).filter(x => x && x.length <= 20))] : [];
+  }
   async function test() {
     const r = await judge([{id: 't1', before: '粉絲', match: '髮現', after: '了他的祕密', options: ['發現']}]);
     return r.get('t1');
   }
-  return {get: () => ({...settings}), save, clear, ready, judge, test, defaults};
+  return {get: () => ({...settings}), save, clear, ready, judge, wording, characterNames, test, defaults};
 })();
 
 // v0.5 interface. Card text is only ever inserted with textContent; nothing from a
@@ -732,14 +902,14 @@ async function loadFile(file) {
     S.input = card; S.fileName = file.name; S.result = null;
     hideWork();
     $('convert').disabled = check.errors.length > 0;
-    $('convert').textContent = '轉換為台灣繁中';
+    updateConvertButton();
     setMascot('idle');
     if (check.errors.length) setStatus('無法轉換：' + check.errors.join('；'), 'bad');
     else setStatus(`已載入「${info.name}」（${info.detail}），按下轉換開始。`, 'good');
   } catch (error) { setStatus('讀取失敗：' + error.message, 'bad'); }
 }
 function hideWork() {
-  for (const id of ['summary', 'reviewStep', 'searchStep', 'compareStep', 'checkStep', 'downloadBar']) $(id).hidden = true;
+  for (const id of ['summary', 'aiStep', 'reviewStep', 'searchStep', 'namesStep', 'compareStep', 'checkStep', 'downloadBar']) $(id).hidden = true;
 }
 function readOptions() {
   const nameCorrections = {};
@@ -767,23 +937,36 @@ function runConvert() {
   S.base = T.U(S.result.output); S.draft = T.U(S.result.output);
   S.edits = []; S.kept = new Set(); S.resolved = new Map(); S.history = []; S.aiTerm = new Map(); S.aiScan = null;
   S.activeTerm = null; S.openPaths = new Set(); S.fieldLimit = 30; S.hadPending = false; S.celebrated = false;
-  for (const id of ['summary', 'reviewStep', 'searchStep', 'compareStep', 'checkStep', 'downloadBar']) $(id).hidden = false;
+  S.ai = null;
+  S.names = {selected: [...new Set(T.existingNameButtons(S.draft))], aiFound: []};
+  for (const id of ['summary', 'aiStep', 'reviewStep', 'searchStep', 'namesStep', 'compareStep', 'checkStep', 'downloadBar']) $(id).hidden = false;
+  $('namesStep').hidden = S.result.type !== 'card';
   $('reviewStep').hidden = S.result.type !== 'card' && S.result.type !== 'preset';
   setStatus(`轉換完成（${Math.round(performance.now() - started)} 毫秒）。`, 'good');
-  $('convert').textContent = '重新轉換（會清除目前的修改）';
+  updateConvertButton();
   refresh();
   renderNames();
   $('summary').scrollIntoView({behavior: 'smooth', block: 'start'});
+  if (AI.ready() && $('useAi').checked) runAiPass();
+}
+function updateConvertButton() {
+  const can = AI.ready(), on = can && $('useAi').checked;
+  $('useAiWrap').hidden = !can;
+  $('convert').textContent = S.result
+    ? (on ? '重新轉換＋AI 校正（會清除目前的修改）' : '重新轉換（會清除目前的修改）')
+    : (on ? '一鍵轉成台灣繁中（含 AI 校正）' : '轉換為台灣繁中');
 }
 
 // ---------- state helpers ----------
 function pushHistory() {
-  S.history.push({draft: T.U(S.draft), base: T.U(S.base), edits: [...S.edits], kept: new Set(S.kept), resolved: new Map(S.resolved)});
+  S.history.push({draft: T.U(S.draft), base: T.U(S.base), edits: [...S.edits], kept: new Set(S.kept), resolved: new Map(S.resolved),
+    aiStates: S.ai ? S.ai.proposals.map(p => p.state) : null});
   if (S.history.length > 40) S.history.shift();
 }
 function undo() {
   const last = S.history.pop(); if (!last) return;
   Object.assign(S, {draft: last.draft, base: last.base, edits: last.edits, kept: last.kept, resolved: last.resolved});
+  if (S.ai && last.aiStates && last.aiStates.length === S.ai.proposals.length) S.ai.proposals.forEach((p, i) => { p.state = last.aiStates[i]; });
   S.aiScan = null; refresh(); toast('已復原上一步');
 }
 const mirrorOf = path => { const m = path.match(/^\$\/data\/(name|description|personality|scenario|first_mes|mes_example)$/u); return m ? '$/' + m[1] : null; };
@@ -810,7 +993,7 @@ function refresh() {
   // Review decisions only touch unprotected text, so every consistent state becomes the
   // new baseline; name/identifier renames are then checked against the last good state.
   if (!S.check.vmErrors) { S.base = T.U(S.draft); S.edits = []; }
-  renderSummary(); renderReview(); renderAuto(); renderAiScan(); renderSearch(); renderCompare(); renderChecks(); renderDownload();
+  renderSummary(); renderAi(); renderReview(); renderAuto(); renderAiScan(); renderSearch(); renderNameButtons(); renderCompare(); renderChecks(); renderDownload();
 }
 
 // ---------- summary ----------
@@ -823,6 +1006,7 @@ function renderSummary() {
   add('檔案', S.fileName);
   add('轉換的欄位', `${changedFields} 個`);
   add('自動修正', `${autoCount} 處`);
+  if (S.ai && S.ai.status === 'done') { const n = aiPendingCount(); add('AI 建議', n ? `${n} 條待決定` : `${S.ai.proposals.filter(p => p.state === 'accepted').length} 條已套用`, n ? 'warn' : 'good'); }
   add('待確認', pending ? `${pending} 處` : '沒有', pending ? 'warn' : 'good');
   add('技術檢核', S.check.errors.length ? `${S.check.errors.length} 項問題` : '通過', S.check.errors.length ? 'bad' : 'good');
 }
@@ -944,25 +1128,203 @@ function applyAiTerm(group) {
   toast(`已套用 ${list.length - skipped} 處 AI 建議`);
 }
 
+// ---------- one-click AI localisation ----------
+// The AI only proposes; nothing changes until a proposal is accepted, and every accepted
+// proposal can be restored. Changes are applied by the page, inside protected-text rules.
+const aiPendingCount = () => S.ai && S.ai.status === 'done' ? S.ai.proposals.filter(p => p.state === 'pending').length : 0;
+const escapeRe = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const occOf = src => ({path: src.path, index: src.index, text: src.text, before: String(src.before || '').slice(-8), after: String(src.after || '').slice(0, 8), key: src.key});
+
+async function runAiPass() {
+  if (S.busy || !S.result) return;
+  if (!AI.ready()) { openAiPanel(); return; }
+  S.busy = true;
+  S.ai = {status: 'running', progress: '準備中…', proposals: [], okCount: 0, error: '', unreadable: 0};
+  const progress = text => { S.ai.progress = text; renderAi(); };
+  AI.onWait = seconds => progress(`服務商說請求太頻繁，等 ${seconds} 秒後自動重試…`);
+  refresh();
+  $('aiStep').scrollIntoView({behavior: 'smooth', block: 'start'});
+  const tokens = S.result.frozen || [], proposals = [];
+  try {
+    // 1. Characters OpenCC often gets wrong, and words whose meaning depends on context.
+    const review = S.review.flatMap(g => visibleItems(g).map(i => ({src: i, options: g.suggest})));
+    const candidates = T.aiCandidates(S.draft, tokens, S.review, 400);
+    const items = [...review.map((x, n) => ({id: 'r' + n, src: x.src, before: x.src.before, match: x.src.text, after: x.src.after, options: x.options})),
+      ...candidates.map(c => ({id: c.id, src: c, before: c.before, match: c.text, after: c.after}))];
+    if (items.length) {
+      const verdicts = await AI.judge(items, (done, total) => progress(`檢查容易轉錯的字（${done}／${total} 處）`));
+      const groups = new Map();
+      for (const it of items) {
+        const v = verdicts.get(it.id);
+        if (!v) continue;
+        // Handled here either way, so it no longer waits in step 2.
+        if (it.src.key) S.kept.add(it.src.key);
+        if (v.ok || !v.fix || v.fix === it.match) { S.ai.okCount++; continue; }
+        const k = it.match + '\u0000' + v.fix;
+        if (!groups.has(k)) groups.set(k, {kind: 'typo', from: it.match, to: v.fix, reason: v.reason, occ: []});
+        groups.get(k).occ.push(occOf(it.src));
+      }
+      proposals.push(...groups.values());
+    }
+    // 2. Mainland wording, found by the AI and applied by the page to every matching place.
+    const chunks = T.proseChunks(S.draft);
+    if (chunks.length) {
+      const {found, unreadable} = await AI.wording(chunks, (done, total) => progress(`找出大陸用語（${done}／${total} 段）`));
+      S.ai.unreadable = unreadable;
+      // Never rename characters or world-book trigger words, even if the AI suggests it.
+      const triggers = T.textFields(S.draft).filter(f => /\/(?:keys|secondary_keys|keysecondary)\/\d+$/u.test(f.path)).map(f => f.value.trim());
+      const names = [...tokens, ...triggers, ...(S.result.nameMapping || []).map(n => n.after), T.fieldAt(S.draft, '$/data/name') || '']
+        .filter(t => typeof t === 'string' && /[\p{Script=Han}]/u.test(t) && t.length > 1);
+      const byFrom = new Map();
+      for (const g of found) {
+        if (!g.from || !g.to || g.from === g.to || byFrom.has(g.from) || g.from.length > 12 || g.to.length > 24 || !/[\p{Script=Han}]/u.test(g.from)) continue;
+        if (names.some(n => n.includes(g.from) || g.from.includes(n))) continue;
+        byFrom.set(g.from, g);
+      }
+      const taken = proposals.flatMap(p => p.occ.map(o => [o.path, o.index, o.index + o.text.length]));
+      const clash = o => taken.some(([path, a, b]) => path === o.path && o.index < b && o.index + o.text.length > a);
+      for (const g of [...byFrom.values()].sort((a, b) => b.from.length - a.from.length)) {
+        const occ = T.locateAll(S.draft, new RegExp(escapeRe(g.from), 'gu'), tokens).filter(o => !clash(o)).map(occOf);
+        if (!occ.length) continue;
+        occ.forEach(o => taken.push([o.path, o.index, o.index + o.text.length]));
+        proposals.push({kind: 'taiwan', from: g.from, to: g.to, reason: g.reason, occ});
+      }
+    }
+  } catch (error) { S.ai.error = error.message; setAiPill('error'); }
+  S.ai.proposals = proposals.sort((a, b) => b.occ.length - a.occ.length).map((p, i) => ({...p, id: 'p' + i, state: 'pending'}));
+  AI.onWait = null;
+  S.ai.status = 'done'; S.busy = false;
+  refresh();
+  if (!S.ai.error) toast(S.ai.proposals.length ? `AI 找到 ${S.ai.proposals.length} 條建議` : 'AI 沒有找到需要修改的地方');
+}
+// Apply (forward) or undo (backward) one proposal at all of its recorded places.
+function swapProposal(p, forward) {
+  const [from, to] = forward ? [p.from, p.to] : [p.to, p.from];
+  let missed = 0;
+  for (const o of p.occ) {
+    const mirror = mirrorOf(o.path), old = T.fieldAt(S.draft, o.path), mirrorOld = mirror ? T.fieldAt(S.draft, mirror) : null;
+    if (!T.swapInContext(S.draft, o, from, to)) { missed++; continue; }
+    if (mirror && mirrorOld === old) T.setField(S.draft, mirror, T.fieldAt(S.draft, o.path));
+  }
+  return missed;
+}
+function setProposals(list, state) {
+  if (!list.length) return;
+  pushHistory();
+  let missed = 0;
+  for (const p of list) {
+    if (state === 'accepted' && p.state !== 'accepted') {
+      missed += swapProposal(p, true);
+      addSuggestion(p.kind === 'taiwan' ? {find: p.from, to: p.to, note: 'AI：台灣用語'}
+        : {find: p.occ[0].before.slice(-1) + p.from + p.occ[0].after.slice(0, 1), to: p.occ[0].before.slice(-1) + p.to + p.occ[0].after.slice(0, 1), note: 'AI：錯字'}, false);
+    } else if (state !== 'accepted' && p.state === 'accepted') missed += swapProposal(p, false);
+    p.state = state;
+  }
+  refresh();
+  const verb = {accepted: '已套用', pending: '已恢復原狀', rejected: '已略過'}[state];
+  toast(list.length === 1 ? `${verb}「${list[0].from}」${missed ? `（${missed} 處內容已變動而略過）` : ''}` : `${verb} ${list.length} 條${missed ? `（${missed} 處內容已變動而略過）` : ''}`);
+}
+function contextLine(o, shown, field = false) {
+  const ctx = el('div', 'ctx');
+  if (field) ctx.append(el('span', 'where', T.fieldLabel(S.draft, o.path) + '：'));
+  ctx.append(document.createTextNode('…' + o.before), el('mark', null, shown), document.createTextNode(o.after + '…'));
+  return ctx;
+}
+function proposalView(p) {
+  const row = el('div', 'prop ' + p.state), body = el('div', 'prop-body');
+  const head = el('div', 'prop-head');
+  head.append(el('span', 'badge kind-' + p.kind, p.kind === 'taiwan' ? '台灣用語' : '錯字'),
+    el('span', 'prop-from', p.from), el('span', 'arrow', '→'), el('span', 'prop-to', p.to), el('span', 'muted', `${p.occ.length} 處`));
+  body.append(head);
+  if (p.reason) body.append(el('div', 'prop-reason', p.reason));
+  const shown = p.state === 'accepted' ? p.to : p.from;
+  body.append(contextLine(p.occ[0], shown));
+  if (p.occ.length > 1) {
+    const more = el('details', 'prop-more'); more.append(el('summary', null, `看全部 ${p.occ.length} 處`));
+    more.addEventListener('toggle', () => {
+      if (!more.open || more.querySelector('.ctx')) return;
+      for (const o of p.occ) { const line = contextLine(o, shown, true); line.append(btn('看對照', 'small link', () => showInCompare(o.path, o.index))); more.append(line); }
+    });
+    body.append(more);
+  }
+  const actions = el('div', 'occ-actions');
+  if (p.state === 'pending') actions.append(btn('接受', 'small primary', () => setProposals([p], 'accepted')), btn('不要', 'small', () => setProposals([p], 'rejected')));
+  else if (p.state === 'accepted') actions.append(el('span', 'state-tag good', '✓ 已套用'), btn('恢復原狀', 'small', () => setProposals([p], 'pending')));
+  else actions.append(el('span', 'state-tag', '已略過'), btn('改成接受', 'small', () => setProposals([p], 'accepted')));
+  row.append(body, actions);
+  return row;
+}
+function renderAi() {
+  const box = $('aiResult'); box.replaceChildren();
+  const a = S.ai;
+  if (!a) {
+    const call = el('div', 'ai-call');
+    if (AI.ready()) {
+      call.append(el('p', null, '讓 AI 幫你修 OpenCC 轉錯的字，並把大陸用語換成台灣說法。AI 只列出建議，按「接受」才會改。'),
+        btn('請 AI 校正這張卡', 'primary', runAiPass));
+    } else {
+      call.append(el('p', null, '設定 AI 之後，按一下就能讓 AI 修錯字、把大陸用語換成台灣說法，你只要看結果按接受。'),
+        btn('設定 AI', 'primary', openAiPanel));
+    }
+    box.append(call); return;
+  }
+  if (a.status === 'running') {
+    const p = el('div', 'ai-running'); p.append(el('span', 'spinner'), el('span', null, 'AI 校正中：' + a.progress));
+    box.append(p); return;
+  }
+  const typo = a.proposals.filter(p => p.kind === 'typo').length, tw = a.proposals.length - typo;
+  const accepted = a.proposals.filter(p => p.state === 'accepted'), pending = a.proposals.filter(p => p.state === 'pending');
+  const autoCount = autoFixes().length;
+  const intro = el('p', 'ai-intro');
+  intro.append(document.createTextNode(a.proposals.length
+    ? `AI 找到 ${a.proposals.length} 條建議（錯字 ${typo} 條、台灣用語 ${tw} 條）。按「接受」才會套用，套用後也可以恢復原狀。`
+    : a.error ? 'AI 這次沒有完成校正。' : 'AI 看完了，沒有找到需要修改的地方。'));
+  box.append(intro);
+  const facts = [];
+  if (autoCount) facts.push(`詞庫已先自動修正 ${autoCount} 處`);
+  if (a.okCount) facts.push(`${a.okCount} 處容易轉錯的字，AI 判斷原本就正確`);
+  if (facts.length) {
+    const more = el('details', 'sub'); more.append(el('summary', null, facts.join('；')));
+    more.append(autoListView());
+    box.append(more);
+  }
+  if (a.error) { const e = el('p', 'check-bad', `AI 中途停止：${a.error}。已完成的部分列在下面。`); e.append(btn('重試', 'small', runAiPass)); box.append(e); }
+  if (a.unreadable) box.append(el('p', 'check-warn', `有 ${a.unreadable} 段 AI 回覆看不懂，已略過；可以按「重新請 AI 校正」再試一次。`));
+  const bar = el('div', 'row ai-bar');
+  if (pending.length) bar.append(btn(`全部接受（${pending.length} 條）`, 'primary', () => setProposals(pending, 'accepted')));
+  if (accepted.length) bar.append(btn(`全部恢復原狀（${accepted.length} 條）`, null, () => setProposals(accepted, 'pending')));
+  bar.append(btn('重新請 AI 校正', 'link', runAiPass));
+  box.append(bar);
+  const list = el('div', 'prop-list');
+  for (const p of a.proposals) list.append(proposalView(p));
+  box.append(list);
+}
+
 // ---------- auto fixes ----------
-function renderAuto() {
-  const fixes = (S.result.autoFixes || []).filter(a => !T.mirrorField(a.path, S.input));
+const autoFixes = () => (S.result.autoFixes || []).filter(a => !T.mirrorField(a.path, S.input));
+function autoListView() {
   const kinds = {auto: '詞庫修正', taiwan: '台灣用語', tai: '台／臺'};
-  const counts = {auto: 0, taiwan: 0, tai: 0}; fixes.forEach(f => counts[f.kind]++);
-  $('autoSummary').textContent = `已自動修正 ${fixes.length} 處（詞庫修正 ${counts.auto}、台灣用語 ${counts.taiwan}、台／臺 ${counts.tai}）`;
-  const list = $('autoList'); list.replaceChildren();
+  const list = el('div', 'auto-list');
   const groups = new Map();
-  for (const f of fixes) { const k = `${f.kind}|${f.from}|${f.to}`; if (!groups.has(k)) groups.set(k, {...f, n: 0}); groups.get(k).n++; }
+  for (const f of autoFixes()) { const k = `${f.kind}|${f.from}|${f.to}`; if (!groups.has(k)) groups.set(k, {...f, n: 0}); groups.get(k).n++; }
   for (const g of [...groups.values()].sort((a, b) => b.n - a.n)) {
     const row = el('div', 'auto-item');
     row.append(el('span', null, `${g.from} → ${g.to}${g.note ? '（' + g.note + '）' : ''}`), el('span', 'muted', `${kinds[g.kind]} · ${g.n} 處`));
     list.append(row);
   }
+  return list;
+}
+function renderAuto() {
+  const fixes = autoFixes();
+  const counts = {auto: 0, taiwan: 0, tai: 0}; fixes.forEach(f => counts[f.kind]++);
+  $('autoSummary').textContent = `已自動修正 ${fixes.length} 處（詞庫修正 ${counts.auto}、台灣用語 ${counts.taiwan}、台／臺 ${counts.tai}）`;
+  $('autoList').replaceChildren(...autoListView().children);
 }
 
 // ---------- AI scan ----------
 function renderAiScan() {
   const box = $('aiScan'); box.replaceChildren();
+  if (S.ai) return; // the one-click pass already covers these characters
   const candidates = T.aiCandidates(S.draft, S.result.frozen || [], S.review);
   if (!S.aiScan) {
     if (!candidates.length) return;
@@ -1072,6 +1434,7 @@ function applyReplace() {
   const preview = T.previewReplacement(S.draft, q, r);
   S.draft = preview.output; S.edits.push(preview.edit);
   const n = preview.impacts.filter(i => i.selected && !T.mirrorField(i.path, S.input)).reduce((a, i) => a + i.count, 0);
+  if (S.names) S.names.selected = S.names.selected.map(n => n === q ? r : n);
   $('findText').value = r; $('replaceText').value = '';
   refresh();
   const t = el('div', 'toast'); t.append(document.createTextNode(`已把 ${n} 處「${q}」改成「${r}」 `), btn('加入詞庫建議', 'link', () => { addSuggestion({find: q, to: r, note: '手動更正'}); t.remove(); }));
@@ -1086,6 +1449,68 @@ function renderNames() {
     row.append(el('span', null, item.before === item.after ? item.after : `${item.before} → ${item.after}`), btn('查找', 'small', () => { $('findText').value = item.after; $('replaceText').value = ''; renderSearch(); $('findText').scrollIntoView({block: 'center'}); }));
     list.append(row);
   }
+}
+
+// ---------- character-name quick buttons ----------
+// Added only to the downloaded copy, so the conversion checks above stay about the conversion.
+function finalCard() {
+  return S.result.type === 'card' && S.names && S.names.selected.length
+    ? T.withNameButtons(S.draft, S.names.selected, () => (crypto.randomUUID ? crypto.randomUUID() : 'name-buttons-' + Date.now().toString(36)))
+    : S.draft;
+}
+function nameChoices() {
+  const found = T.nameCandidates(S.draft), known = new Set(found.map(c => c.name));
+  for (const n of S.names.aiFound) if (!known.has(n)) { known.add(n); found.push({name: n, source: 'AI', count: JSON.stringify(S.draft).split(n).length - 1}); }
+  return found;
+}
+function renderNameButtons() {
+  if (!S.names || S.result.type !== 'card') return;
+  const chips = $('nameChips'); chips.replaceChildren();
+  const choices = nameChoices(), sel = S.names.selected;
+  for (const c of choices) {
+    const on = sel.includes(c.name);
+    const chip = btn(c.name, 'chip name-chip' + (on ? ' active' : ''), () => toggleName(c.name));
+    chip.title = `${c.source}・卡片裡出現 ${c.count} 次`;
+    chip.append(el('span', 'count', on ? '✓' : String(c.count)));
+    chips.append(chip);
+  }
+  for (const n of sel) if (!choices.some(c => c.name === n)) { const chip = btn(n, 'chip name-chip active', () => toggleName(n)); chip.append(el('span', 'count', '✓')); chips.append(chip); }
+  if (!chips.children.length) chips.append(el('p', 'muted', '沒有自動找到角色名，可以在下面手動新增' + (AI.ready() ? '，或請 AI 找。' : '。')));
+  $('nameAi').hidden = !AI.ready();
+  const plan = $('namePlan'); plan.replaceChildren();
+  if (sel.length) {
+    const p = el('p', 'good-text', `下載時會加入 ${sel.length} 個按鈕（依點選順序）：`);
+    plan.append(p);
+    const preview = el('div', 'name-preview');
+    sel.forEach((n, i) => {
+      const b = el('span', 'name-btn-preview', n);
+      if (i > 0) { const left = btn('◀', 'small link', () => { sel.splice(i - 1, 0, sel.splice(i, 1)[0]); renderNameButtons(); }); left.title = '往前移'; b.prepend(left); }
+      preview.append(b);
+    });
+    const clear = btn('全部取消', 'small link', () => { S.names.selected = []; renderNameButtons(); });
+    plan.append(preview, clear);
+  } else plan.append(el('p', 'muted', '還沒有選名字，下載的卡片不會加按鈕' + (T.existingNameButtons(S.draft).length ? '（卡片原本的按鈕會保留）。' : '。')));
+}
+function toggleName(n) {
+  const sel = S.names.selected, i = sel.indexOf(n);
+  if (i === -1) sel.push(n); else sel.splice(i, 1);
+  renderNameButtons();
+}
+function addTypedNames() {
+  const names = $('nameAdd').value.split(/[,，、\s]+/u).map(s => s.trim()).filter(s => s && s.length <= 20);
+  for (const n of names) if (!S.names.selected.includes(n)) S.names.selected.push(n);
+  $('nameAdd').value = ''; renderNameButtons();
+}
+async function findNamesWithAi() {
+  if (S.busy) return;
+  S.busy = true; $('nameAi').disabled = true; $('nameAi').textContent = 'AI 找名字中…';
+  try {
+    const names = await AI.characterNames(T.proseChunks(S.draft, 6000)[0] || '');
+    const text = JSON.stringify(S.draft);
+    S.names.aiFound = names.filter(n => text.includes(n));
+    toast(S.names.aiFound.length ? `AI 找到 ${S.names.aiFound.length} 個名字，點一下就能加入` : 'AI 沒有找到角色名');
+  } catch (error) { toast('AI 失敗：' + error.message); setAiPill('error'); }
+  finally { S.busy = false; $('nameAi').disabled = false; $('nameAi').textContent = '請 AI 找出角色名'; renderNameButtons(); }
 }
 
 // ---------- side-by-side comparison ----------
@@ -1244,16 +1669,18 @@ function renderChecks() {
   if (codeNotes.length) box.append(el('p', 'muted', `${codeNotes.length} 個欄位含有程式碼：靜態檢查通過，但仍建議匯入酒館實際點一下畫面和按鈕確認。`));
 }
 function renderDownload() {
-  const errors = S.check.errors.length, pending = pendingCount();
+  const errors = S.check.errors.length, aiPending = aiPendingCount(), pending = pendingCount() + aiPending;
   const status = $('downloadStatus');
   if (errors) { status.textContent = `技術檢核有 ${errors} 項問題，已暫停下載`; status.className = 'status bubble bad'; }
+  else if (S.ai && S.ai.status === 'running') { status.textContent = 'AI 校正中，可以先看下方結果'; status.className = 'status bubble'; }
+  else if (aiPending) { status.textContent = `可以下載；還有 ${aiPending} 條 AI 建議沒決定，沒按接受的不會套用`; status.className = 'status bubble'; }
   else if (pending) { status.textContent = `可以下載；還有 ${pending} 處待確認，未處理的維持目前寫法`; status.className = 'status bubble'; }
   else { status.textContent = '檢核通過，可以下載'; status.className = 'status bubble good'; }
   $('downloadJson').disabled = !!errors;
   $('downloadPng').disabled = !!errors || !S.png || S.result.type !== 'card';
   $('undo').disabled = !S.history.length;
   if (pending) S.hadPending = true;
-  let mood = errors || pending ? 'review' : S.hadPending ? 'celebrate' : 'ready';
+  let mood = S.ai && S.ai.status === 'running' ? 'working' : errors || pending ? 'review' : S.hadPending ? 'celebrate' : 'ready';
   if (mood === 'celebrate' && !S.celebrated) { S.celebrated = true; status.textContent = '恭喜！全部確認完成，可以下載了'; toast('🎉 全部確認完成！'); }
   else if (mood === 'celebrate') status.textContent = '全部確認完成，可以下載';
   setMascot(mood);
@@ -1272,6 +1699,8 @@ function setAiPill(state) {
   pill.classList.toggle('error', state === 'error');
   const names = {anthropic: 'Claude', openai: 'OpenAI 相容', gemini: 'Gemini'};
   $('aiPillText').textContent = AI.ready() ? `AI 協助：${names[s.provider]}` + (state === 'error' ? '（連線有問題）' : '') : 'AI 協助：未設定';
+  updateConvertButton();
+  if (S.result && !S.busy) renderAi();
 }
 const aiHints = {
   gemini: {text: '到 Google AI Studio（aistudio.google.com）按「Get API key」取得金鑰，建議在沒有綁定帳單的專案另建一把專用金鑰，使用免費額度。連線網址已內建（generativelanguage.googleapis.com），不用填。', models: ['gemini-3.5-flash-lite', 'gemini-3.8-flash']},
@@ -1327,6 +1756,7 @@ $('drop').addEventListener('dragleave', () => $('drop').classList.remove('drag')
 $('drop').addEventListener('drop', e => { e.preventDefault(); $('drop').classList.remove('drag'); loadFile(e.dataTransfer.files[0]); });
 $('loadJsonText').addEventListener('click', () => { const text = $('jsonInput').value; loadFile({name: '貼上的角色卡.json', arrayBuffer: async () => new TextEncoder().encode(text).buffer}); });
 $('convert').addEventListener('click', convert);
+$('useAi').addEventListener('change', updateConvertButton);
 for (const id of ['useTai', 'protectedNames', 'nameCorrections']) $(id).addEventListener('input', () => { if (S.result) setStatus('設定已變更，按「重新轉換」才會生效。'); });
 for (const id of ['findText', 'replaceText']) $(id).addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(renderSearch, 200); });
 $('applyReplace').addEventListener('click', applyReplace);
@@ -1336,8 +1766,12 @@ $('moreFields').addEventListener('click', () => { S.fieldLimit += 30; renderComp
 $('undo').addEventListener('click', undo);
 $('copySuggest').addEventListener('click', copySuggestions);
 $('clearSuggest').addEventListener('click', () => { S.suggestions = []; renderSuggestions(); });
-$('downloadJson').addEventListener('click', () => save(JSON.stringify(S.draft, null, 2), outName('.json'), 'application/json;charset=utf-8'));
-$('downloadPng').addEventListener('click', () => save(T.writePng(S.png, S.draft), outName('.png'), 'image/png'));
+$('downloadJson').addEventListener('click', () => save(JSON.stringify(finalCard(), null, 2), outName('.json'), 'application/json;charset=utf-8'));
+$('downloadPng').addEventListener('click', () => save(T.writePng(S.png, finalCard()), outName('.png'), 'image/png'));
+$('nameAddBtn').addEventListener('click', addTypedNames);
+$('nameAdd').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addTypedNames(); } });
+$('nameAll').addEventListener('click', () => { for (const c of nameChoices()) if (!S.names.selected.includes(c.name)) S.names.selected.push(c.name); renderNameButtons(); });
+$('nameAi').addEventListener('click', findNamesWithAi);
 setAiPill();
 setMascot('idle');
 loadDictionary();

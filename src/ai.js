@@ -26,14 +26,31 @@ const TranslatorAI = (() => {
   }
   const ready = () => !!(settings.key && settings.model && (settings.provider !== 'openai' || settings.base));
 
+  // Free tiers limit requests per minute; wait and retry a couple of times before giving up.
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   async function request(system, user) {
+    for (let attempt = 0; ; attempt++) {
+      try { return await requestOnce(system, user); }
+      catch (error) {
+        if (!error.retryAfter || attempt >= 2) throw error;
+        if (TranslatorAI.onWait) TranslatorAI.onWait(error.retryAfter);
+        await sleep(error.retryAfter * 1000);
+      }
+    }
+  }
+  async function requestOnce(system, user) {
     const {provider, model, key} = settings;
     let response, data;
     const fail = async res => {
       let detail = '';
       try { const j = await res.json(); detail = j?.error?.message || j?.message || ''; } catch { /* ignore */ }
       const hint = res.status === 401 || res.status === 403 ? '金鑰無效或沒有權限' : res.status === 404 ? '模型名稱或網址錯誤' : res.status === 429 ? '額度用完或請求太頻繁' : '服務商回應錯誤';
-      throw new Error(`${hint}（HTTP ${res.status}）${detail ? '：' + detail.slice(0, 160) : ''}`);
+      const error = new Error(`${hint}（HTTP ${res.status}）${detail ? '：' + detail.slice(0, 160) : ''}`);
+      if (res.status === 429 && !/quota exceeded.*per day|PerDay|limit: 0\b/iu.test(detail)) {
+        const header = Number(res.headers.get('retry-after')), hinted = Number((detail.match(/retry in ([\d.]+)s/iu) || [])[1]);
+        error.retryAfter = Math.min(60, Math.ceil(header || hinted || 20));
+      }
+      throw error;
     };
     try {
       if (provider === 'anthropic') {
@@ -100,9 +117,45 @@ const TranslatorAI = (() => {
     }
     return results;
   }
+  // One-click wording pass: the AI lists Mainland wording found in each chunk with the
+  // Taiwan equivalent. The page applies the list itself, so names and code stay protected.
+  const wordingSystem = [
+    '你是台灣繁體中文的在地化編輯。使用者給你的是簡體中文角色卡用 OpenCC 轉成繁體字之後的文字：字形已經是繁體，但用詞可能還是中國大陸的說法。',
+    '請找出台灣讀者會覺得是「大陸用語」的詞，給出台灣常用的說法。例如：質量→品質、信息→訊息、激活→啟用、打印→列印、出租車→計程車、視頻→影片。',
+    '規則：',
+    '1. from 必須是原文裡逐字出現的詞（2～8 字），to 是台灣說法。',
+    '2. 只換詞，不改寫句子、不潤飾文風、不改標點。',
+    '3. 角色名、地名、組織名、作者自創的專有名詞、刻意的口語、方言、網路用語，一律不要改。',
+    '4. 同一個詞在文中若有不同意思，或台灣也常這樣說，就不要列。',
+    '5. 若看到 OpenCC 轉錯的字（例如「頭發」應為「頭髮」、「剋制」應為「克制」），也用同樣格式列出，from 要包含前後字以免誤改。',
+    '6. 不確定就不要列。',
+    '只輸出 JSON 陣列，不要其他文字：[{"from":"原文詞","to":"台灣說法","reason":"15字內理由"}]；沒有就輸出 []。'
+  ].join('\n');
+  async function wording(chunks, onProgress) {
+    const found = [];
+    let unreadable = 0;
+    for (let i = 0; i < chunks.length; i++) {
+      const text = await request(wordingSystem, chunks[i]);
+      // A malformed answer for one chunk should not throw away the others.
+      let list = null;
+      try { const start = text.indexOf('['), end = text.lastIndexOf(']'); if (start !== -1 && end > start) list = JSON.parse(text.slice(start, end + 1)); } catch { list = null; }
+      if (!Array.isArray(list)) unreadable++;
+      else for (const x of list) if (x && typeof x.from === 'string' && typeof x.to === 'string')
+        found.push({from: x.from.trim(), to: x.to.trim(), reason: typeof x.reason === 'string' ? x.reason.slice(0, 40) : ''});
+      if (onProgress) onProgress(i + 1, chunks.length);
+    }
+    return {found, unreadable};
+  }
+  async function characterNames(text) {
+    const answer = await request('你會閱讀角色卡。請列出這段文字裡會在故事中登場的角色名字（人名或固定稱呼），不要列 {{user}}、種族、地名、組織、物品。只輸出 JSON 字串陣列，例如 ["林小雨","王大明"]；沒有就輸出 []。', text);
+    const start = answer.indexOf('['), end = answer.lastIndexOf(']');
+    if (start === -1 || end <= start) throw new Error('AI 回覆格式無法解析');
+    const list = JSON.parse(answer.slice(start, end + 1));
+    return Array.isArray(list) ? [...new Set(list.filter(x => typeof x === 'string').map(x => x.trim()).filter(x => x && x.length <= 20))] : [];
+  }
   async function test() {
     const r = await judge([{id: 't1', before: '粉絲', match: '髮現', after: '了他的祕密', options: ['發現']}]);
     return r.get('t1');
   }
-  return {get: () => ({...settings}), save, clear, ready, judge, test, defaults};
+  return {get: () => ({...settings}), save, clear, ready, judge, wording, characterNames, test, defaults};
 })();

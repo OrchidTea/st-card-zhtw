@@ -77,7 +77,7 @@ function styleSymbols(card) {
   const symbols=new Set();
   for(const {value} of V(card)) {
     for(const m of value.matchAll(/\b(?:class|id)\s*=\s*["']([^"']+)["']/gu)) for(const token of m[1].split(/\s+/u)) if(te(token)) symbols.add(token);
-    for(const m of value.matchAll(/[.#]([\p{L}_-][\p{L}\p{N}_-]*)|(--[\p{L}_-][\p{L}\p{N}_-]*)/gu)) if(te(m[1]||m[2])) symbols.add(m[1]||m[2]);
+    for(const m of value.matchAll(/(?<![\p{L}\p{N}])[.#]([\p{L}_-][\p{L}\p{N}_-]*)|(--[\p{L}_-][\p{L}\p{N}_-]*)/gu)) if(te(m[1]||m[2])) symbols.add(m[1]||m[2]);
   }
   return [...symbols];
 }

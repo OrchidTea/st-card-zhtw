@@ -83,6 +83,40 @@ test('重複轉換結果穩定', () => {
   const r = api.convert(card('粉丝发现签售会回归，屏幕默认。'));
   assert.equal(all(api.convert(r.output)), all(r));
 });
+test('AI 校正：只在可改的欄位找詞，接受與恢復都能還原', () => {
+  const r = api.convert(card('这个产品的质量很好。质量第一，<span class="质量">质量</span>', {
+    character_book: {entries: [{keys: ['质量'], content: '质量检查。https://x.cn/质量', comment: '质量'}]}}));
+  const doc = api.U(r.output), before = JSON.stringify(doc);
+  const occ = api.locateAll(doc, /質量/gu, r.frozen);
+  // class 名稱與網址裡的不算；描述 3 處、觸發詞 1、內容 1、標題 1
+  assert.equal(occ.length, 6, JSON.stringify(occ.map(o => o.path)));
+  for (const o of occ) assert.ok(api.swapInContext(doc, o, '質量', '品質'));
+  const after = JSON.stringify(doc);
+  assert.ok(after.includes('class=\\"質量\\"') && after.includes('https://x.cn/质量') && !doc.data.description.replace('class="質量"', '').includes('質量'));
+  for (const o of occ) assert.ok(api.swapInContext(doc, o, '品質', '質量'));
+  assert.equal(JSON.stringify(doc), before);
+});
+test('AI 校正：送出的文字不含網址與程式碼', () => {
+  const r = api.convert(card('正文质量。', {extensions: {regex_scripts: [{findRegex: '质量', replaceString: '<div class="a">显示质量</div><script>const x = 1;</script>'}]}}));
+  const text = api.proseChunks(r.output).join('\n');
+  assert.ok(text.includes('正文質量') && text.includes('顯示質量'));
+  assert.equal(/<script|const x|class=/u.test(text), false);
+});
+test('角色名按鈕：新增輸入助手腳本、更新時保留其他按鈕', () => {
+  const r = api.convert(card('', {character_book: {entries: [{keys: ['林小雨'], comment: '主角林小雨', content: '林小雨'}]}}));
+  assert.equal(JSON.stringify(api.nameCandidates(r.output).map(c => c.name)), JSON.stringify(['林小雨']));
+  const once = api.withNameButtons(r.output, ['林小雨', '王大明'], () => 'id-1');
+  const s = once.data.extensions.tavern_helper.scripts;
+  assert.equal(s.length, 1);
+  assert.ok(s[0].content.includes('/酒馆助手/输入助手/index.js'));
+  assert.equal(JSON.stringify(s[0].button.buttons.map(b => b.name)), JSON.stringify(['林小雨', '王大明']));
+  assert.equal(s[0].data.buttons[1].cursor_position, 3);
+  assert.equal(r.output.data.extensions?.tavern_helper, undefined, '原稿不應被改動');
+  s[0].data.buttons.unshift({name: '「」', enable: true, description: '引號', content: '「」', cursor_position: 1, insert_position: 'as_is'});
+  const twice = api.withNameButtons(once, ['王大明'], () => 'id-2').data.extensions.tavern_helper.scripts;
+  assert.equal(twice.length, 1); assert.equal(twice[0].id, 'id-1');
+  assert.equal(JSON.stringify(twice[0].data.buttons.map(b => b.name)), JSON.stringify(['「」', '王大明']));
+});
 
 // ---------- real cards ----------
 const cardDir = path.join(__dirname, 'cards');

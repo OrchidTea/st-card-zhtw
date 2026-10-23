@@ -24,7 +24,7 @@
 <section id="aiPanel" class="ai-panel" hidden>
   <form class="ai-inner" id="aiForm" autocomplete="off">
     <h2>AI 協助設定</h2>
-    <p class="muted">AI 會幫你判斷「冷面／冷麵」這類要看前後文的字，只提供建議，不會自己改卡。使用你自己的 API 金鑰，金鑰只存在你這台電腦的瀏覽器裡，本網站不接收、不儲存。</p>
+    <p class="muted">設定好之後，轉換時 AI 會幫你修 OpenCC 轉錯的字、把大陸用語換成台灣說法，列成清單讓你按「接受」，接受後也能恢復原狀。使用你自己的 API 金鑰，金鑰只存在你這台電腦的瀏覽器裡，本網站不接收、不儲存。</p>
     <div class="ai-grid">
       <label>服務商
         <select id="aiProvider">
@@ -45,7 +45,7 @@
       <button id="aiClear" type="button">清除金鑰</button>
       <span id="aiStatus" class="muted" role="status"></span>
     </div>
-    <p class="fine">建議另外開一把專用金鑰給這個工具，並在服務商後台設定用量上限；萬一外洩，作廢那一把就好。送給 AI 的只有待判斷字詞前後約 24 個字，不會送整張卡。</p>
+    <p class="fine">建議另外開一把專用金鑰給這個工具，並在服務商後台設定用量上限；萬一外洩，作廢那一把就好。AI 校正時，會把卡片裡的中文文字（角色設定、世界書、開場白、畫面上的中文）分段送給你選的服務商；網址不會送出，程式碼只送其中的中文和前後少量字元。</p>
   </form>
 </section>
 
@@ -68,10 +68,15 @@
       <label class="block">完全不轉換的專有名詞（每行一個）<textarea id="protectedNames" rows="3"></textarea></label>
       <label class="block">指定姓名更正（每行「原文=更正」）<textarea id="nameCorrections" rows="3"></textarea></label>
     </details>
-    <div class="row"><button id="convert" type="button" class="primary" disabled>轉換為台灣繁中</button><span id="status" class="status" role="status">請先載入角色卡。</span></div>
+    <div class="row"><button id="convert" type="button" class="primary" disabled>轉換為台灣繁中</button><label id="useAiWrap" class="check" hidden><input id="useAi" type="checkbox" checked> 轉換後自動請 AI 校正</label><span id="status" class="status" role="status">請先載入角色卡。</span></div>
   </section>
 
   <section id="summary" class="summary" hidden></section>
+
+  <section id="aiStep" class="card step ai-step" hidden>
+    <h2><span class="num">✦</span>AI 校正結果</h2>
+    <div id="aiResult"></div>
+  </section>
 
   <section id="reviewStep" class="card step" hidden>
     <h2><span class="num">2</span>需要你確認的詞</h2>
@@ -99,9 +104,22 @@
     <details class="sub"><summary>辨識到的姓名</summary><div id="nameList" class="name-list"></div></details>
   </section>
 
+  <section id="namesStep" class="card step" hidden>
+    <h2><span class="num">4</span>角色名快捷按鈕<span class="badge">選用</span></h2>
+    <p class="muted">多人角色卡常要打角色名。點選下面的名字，下載的卡片就會內建酒館助手的「角色名輸入」按鈕：聊天時點一下名字，就會插入輸入框，不用記難打的字。需要先在酒館安裝「酒館助手」擴充功能。</p>
+    <div id="nameChips" class="chips"></div>
+    <div class="row name-add">
+      <input id="nameAdd" type="text" placeholder="手動新增名字，多個用逗號隔開">
+      <button id="nameAddBtn" type="button">加入</button>
+      <button id="nameAll" type="button" class="link">全選建議的名字</button>
+      <button id="nameAi" type="button" class="link" hidden>請 AI 找出角色名</button>
+    </div>
+    <div id="namePlan" class="name-plan"></div>
+  </section>
+
   <section id="compareStep" class="card step" hidden>
     <div class="compare-head">
-      <h2><span class="num">4</span>簡繁對照</h2>
+      <h2><span class="num">5</span>簡繁對照</h2>
       <div class="compare-tools">
         <input id="compareFilter" type="search" placeholder="篩選欄位或內容">
         <label class="check"><input id="onlyChanged" type="checkbox"> 只看有變動的行</label>
@@ -127,14 +145,15 @@
       <li><strong>詞庫自動修正</strong>：OpenCC 會因斷詞把某些字轉錯，例如「粉絲髮現」「籤售會」「迴歸期」。詞庫裡「一定是錯字」的寫法會自動改正為「發現」「簽售會」「回歸期」。</li>
       <li><strong>台灣用語</strong>：屏幕→螢幕、默認→預設、點贊→按讚、視頻→影片等，只收錄意思明確、不會誤傷的詞。</li>
       <li><strong>台／臺統一</strong>：預設把「臺」寫成台灣常見的「台」，可在進階設定關閉。</li>
-      <li><strong>需要確認的詞</strong>：「冷麵」「不準」「酒店」「信息」這類可能對、也可能錯的詞不會自動改，列在第 2 步讓你決定，也可以請 AI 看前後文判斷。</li>
+      <li><strong>AI 校正（有設定 AI 時）</strong>：AI 看前後文，找出 OpenCC 轉錯的字，以及「質量」「信息」「激活」這類大陸用語，列出台灣說法。AI 只提出建議，由網頁依同樣的保護規則替換，按「接受」才會套用，也可以逐條或全部恢復原狀。</li>
+      <li><strong>需要確認的詞</strong>：沒有用 AI 時，「冷麵」「不準」「酒店」「信息」這類可能對、也可能錯的詞不會自動改，列在第 2 步讓你決定。</li>
     </ol>
     <h3>哪些會一起改、哪些保留原文</h3>
     <p>角色名、世界書觸發詞、正則觸發條件和畫面文字會<strong>全部一起轉成繁體</strong>，因為聊天內容會變成繁體，這些如果留簡體就會對不上、功能失效。只有指向卡片外部或程式內部的東西保留原文：網址、音源與圖片路徑、HTML 的 id／class、JavaScript 函式與事件名稱、MVU 變數與 JSON 鍵名、<code>{{user}}</code> 等巨集。轉換後會逐一比對這些內容，有變動就禁止下載。</p>
     <h3>繁體化詞庫</h3>
     <p>規則放在網站資料夾的 <code>dictionary.json</code>（目前版本 <span id="dictVersion">—</span>），分成「autoFix 自動修正」「review 提醒確認」「taiwan 台灣用語」三類。你在第 2、3 步做的修正可以產生詞庫建議，貼進這個檔案後重新整理網頁即生效；只有能修改網站檔案的人才能更新詞庫。</p>
     <h3>AI 協助與金鑰安全</h3>
-    <p>AI 功能使用你自己的 API 金鑰。金鑰只存在你這台電腦的瀏覽器（localStorage），勾選「記住」才會保存，不勾則關閉網頁就消失；本網站沒有伺服器接收或記錄金鑰。呼叫 AI 時，由你的瀏覽器直接連到你選的服務商，只送出待判斷字詞前後約 24 個字。AI 只提供建議，採用與否由你決定。同一台電腦、同一個瀏覽器的人都能使用已記住的金鑰，公用電腦請不要勾選。</p>
+    <p>AI 功能使用你自己的 API 金鑰。金鑰只存在你這台電腦的瀏覽器（localStorage），勾選「記住」才會保存，不勾則關閉網頁就消失；本網站沒有伺服器接收或記錄金鑰。呼叫 AI 時，由你的瀏覽器直接連到你選的服務商。AI 校正會把卡片裡的中文文字分段送出（網址不送，程式碼只送其中的中文和前後少量字元），單獨判斷某個詞時只送該詞前後約 24 個字。AI 只提供建議，採用與否由你決定。同一台電腦、同一個瀏覽器的人都能使用已記住的金鑰，公用電腦請不要勾選。</p>
     <p><strong>建議使用 Google AI Studio 的免費額度（Free tier）</strong>：到 <code>aistudio.google.com</code> 按「Get API key」，在<strong>沒有綁定帳單</strong>的專案另外建立一把專用金鑰，模型填 <code>gemini-3.5-flash-lite</code>（快、省，判斷錯字已足夠）或 <code>gemini-3.8-flash</code>。連線網址已內建，不用填。沒有綁定帳單的專案不會產生費用，金鑰萬一外洩，最多是額度被別人用完、暫時無法使用，作廢後重新建立即可；但別人仍可能以你的帳號名義濫用，發現異常請立即作廢。請注意，依 Google 的條款，免費額度送出的內容可能被用來改進 Google 的產品。使用付費服務（其他服務商或已綁定帳單的專案）時，請務必在後台設定用量上限。</p>
     <h3>限制</h3>
     <p>這是靜態檢查，不會執行卡片裡的腳本。外部世界書、外掛行為與實際播放效果仍需在酒館測試。網易雲音樂、QQ 音樂等外鏈音源在台灣常無法播放，沒有聲音不一定是轉換造成的。角色卡、PNG 圖片與其他資料只在你的瀏覽器處理，不會上傳。</p>

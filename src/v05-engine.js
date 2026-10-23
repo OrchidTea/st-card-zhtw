@@ -210,6 +210,123 @@ function aiCandidates(doc, tokens, reviewGroups = [], limit = 200) {
   return items;
 }
 
+// ---------- one-click AI localisation helpers ----------
+// Every unprotected occurrence of `re` (must be global) in editable, non-mirror fields.
+function locateAll(doc, re, tokens) {
+  const out = [];
+  for (const field of textFields(doc)) {
+    if (!editableField(doc, field.path) || mirrorField(field.path, doc) || !/[\p{Script=Han}]/u.test(field.value)) continue;
+    const ranges = protectedRanges(field.value, tokens);
+    re.lastIndex = 0;
+    for (const m of field.value.matchAll(re)) {
+      if (!m[0] || overlaps(ranges, m.index, m.index + m[0].length)) continue;
+      out.push({path: field.path, index: m.index, text: m[0], ...snippet(field.value, m.index, m[0].length, 8)});
+    }
+  }
+  return out;
+}
+// Replace `from` with `to` at one recorded occurrence, found again by its surrounding text
+// (positions drift as other changes are applied). Returns false when it can no longer be found.
+function swapInContext(doc, occ, from, to) {
+  const value = fieldAt(doc, occ.path);
+  if (typeof value !== 'string') return false;
+  const b = occ.before || '', a = occ.after || '';
+  // Neighbouring words may have been changed too, so the context is relaxed step by step;
+  // the last resort is the bare word, but only close to where it was recorded.
+  const tries = [[b, a], [b.slice(-3), a.slice(0, 3)], [b.slice(-1), a.slice(0, 1)], [b.slice(-2), ''], ['', a.slice(0, 2)], ['', '']];
+  for (const [x, y] of tries) {
+    const needle = x + from + y, bare = !x && !y;
+    let best = -1, at = value.indexOf(needle);
+    while (at !== -1) {
+      if (best === -1 || Math.abs(at + x.length - occ.index) < Math.abs(best + x.length - occ.index)) best = at;
+      at = value.indexOf(needle, at + 1);
+    }
+    if (best !== -1 && bare && Math.abs(best - occ.index) > 40) best = -1;
+    if (best !== -1) {
+      const start = best + x.length;
+      setField(doc, occ.path, value.slice(0, start) + to + value.slice(start + from.length));
+      return true;
+    }
+  }
+  return false;
+}
+// Readable text of the card in chunks for the AI wording pass. Code fields contribute only
+// their Chinese text runs; URLs never leave the page; duplicate texts are sent once.
+function proseChunks(doc, size = 5000) {
+  const seen = new Set(), pieces = [];
+  for (const field of textFields(doc)) {
+    if (!editableField(doc, field.path) || mirrorField(field.path, doc) || !/[\p{Script=Han}]/u.test(field.value)) continue;
+    if (/\/(?:findRegex|keys\/\d+|secondary_keys\/\d+|keysecondary\/\d+)$/u.test(field.path)) continue;
+    let text = field.value.replace(/https?:\/\/[^\s"'<>`)]+/gu, '');
+    if (codeLike(text)) text = [...text.matchAll(/[^<>{}\n"'`=;]*[\p{Script=Han}][^<>{}\n"'`=;]*/gu)].map(m => m[0].trim()).filter(Boolean).join('\n');
+    text = text.trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    for (const line of text.split('\n')) for (let i = 0; i < line.length; i += size) pieces.push(line.slice(i, i + size));
+    pieces.push('');
+  }
+  const chunks = [];
+  let current = '';
+  for (const piece of pieces) {
+    if (current && current.length + piece.length + 1 > size) { chunks.push(current.trim()); current = ''; }
+    current += piece + '\n';
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
+}
+
+// ---------- character-name quick buttons (TavernHelper "輸入助手") ----------
+const quickInputUrl = 'https://testingcf.jsdelivr.net/gh/StageDog/tavern_resource/dist/酒馆助手/输入助手/index.js';
+const isQuickInput = script => typeof script?.content === 'string' && script.content.includes('/输入助手/index.js');
+// Buttons that simply type their own label are character names; others (quotes, brackets) are kept as they are.
+const nameButton = b => b && typeof b.name === 'string' && b.content === b.name && /^[\p{L}\p{N}·・ ]+$/u.test(b.name);
+// Name buttons already in the card's 輸入助手 script, in their original order.
+const existingNameButtons = doc => M(doc).filter(isQuickInput).flatMap(s => (s.data?.buttons || []).filter(nameButton).map(b => b.name));
+function nameCandidates(doc) {
+  const all = JSON.stringify(E(doc) || doc), found = new Map();
+  const add = (raw, source) => {
+    const n = String(raw || '').trim();
+    if (n && n.length <= 12 && /^[\p{Script=Han}·・]+$/u.test(n) && !found.has(n)) found.set(n, source);
+  };
+  for (const s of M(doc)) if (isQuickInput(s)) for (const b of s.data?.buttons || []) if (nameButton(b)) add(b.name, '已有按鈕');
+  for (const f of textFields(doc)) {
+    if (mirrorField(f.path, doc)) continue;
+    for (const m of f.value.matchAll(/^\s*(?:-\s*)?(?:name|名字|姓名|角色名|中文名|Chinese name)\s*[:：]\s*["'「]?([\p{Script=Han}·・]{1,12})/gimu)) add(m[1], '角色設定');
+  }
+  // World-book triggers that end the entry title ("狼族哥哥拉克倫", "拉克倫NSFW") are usually names.
+  for (const entry of R(doc)) {
+    const title = String(entry?.comment || entry?.name || '').replace(/[^\p{Script=Han}·・]+$/u, '');
+    for (const key of entry?.keys || []) if (typeof key === 'string' && key.trim().length > 1 && title.endsWith(key.trim())) add(key, '世界書');
+  }
+  return [...found].map(([name, source]) => ({name, source, count: all.split(name).length - 1}))
+    .filter(x => x.count >= 2 || x.source === '已有按鈕').sort((a, b) => b.count - a.count).slice(0, 40);
+}
+// Returns a copy of the card with name buttons added to (or updated in) its 輸入助手 script.
+function withNameButtons(doc, names, makeId = () => 'name-buttons-' + Date.now().toString(36)) {
+  const list = [...new Set(names.map(n => String(n).trim()).filter(Boolean))];
+  if (!list.length) return doc;
+  const out = U(doc), data = E(out);
+  if (!data.extensions || typeof data.extensions !== 'object') data.extensions = {};
+  const ext = data.extensions;
+  let scripts;
+  if (Array.isArray(ext.tavern_helper?.scripts)) scripts = ext.tavern_helper.scripts;
+  else if (Array.isArray(ext.TavernHelper_scripts)) scripts = ext.TavernHelper_scripts;
+  else { ext.tavern_helper = {...(ext.tavern_helper || {}), scripts: [], variables: ext.tavern_helper?.variables || {}}; scripts = ext.tavern_helper.scripts; }
+  const entry = n => ({name: n, enable: true, description: n, content: n, cursor_position: [...n].length, insert_position: 'as_is'});
+  let script = scripts.find(isQuickInput);
+  if (!script) {
+    script = {type: 'script', enabled: true, name: '角色名輸入', id: makeId(),
+      info: '# 角色名輸入\n\n聊天時點輸入框上方的角色名，就會在游標位置插入名字。\n\n- 使用 StageDog／tavern_resource 的「輸入助手」（作者：司马咩咩、青空莉想做舞台少女的狗）\n- 由「角色卡台灣繁中工具」加入；需要安裝酒館助手',
+      content: `import '${quickInputUrl}'`, button: {enabled: true, buttons: []}, data: {buttons: []}, export_with: {data: true, button: true}};
+    scripts.push(script);
+  }
+  const kept = (script.data?.buttons || []).filter(b => !nameButton(b));
+  script.data = {...(script.data || {}), buttons: [...kept, ...list.map(entry)]};
+  script.button = {...(script.button || {}), enabled: true, buttons: script.data.buttons.map(b => ({name: b.name, visible: true}))};
+  script.enabled = true;
+  return out;
+}
+
 const regionalAudio = /https?:\/\/(?:[\w-]+\.)*(?:music\.163\.com|music\.126\.net|y\.qq\.com|qqmusic\.qq\.com|kuwo\.cn|kugou\.com|ximalaya\.com)[^\s"'<>]*/giu;
 function audioNotes(card) {
   const notes = new Map();
